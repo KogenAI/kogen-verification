@@ -1,0 +1,4 @@
+github.com/KogenAI/kogen-coordinator v0.0.0-20261102193107-c4a49a4fe84f h1:ZdNwN4h136uHrGpMTNCHg2A54np+rY0c/4IberxzPEU=
+github.com/KogenAI/kogen-coordinator v0.0.0-20261102193107-c4a49a4fe84f/go.mod h1:hNyuwgd+/QEkQVU7tuJyBBgWffxrQtcYA6DZlgb1FCc=
+github.com/KogenAI/kogen-loop v0.0.0-20261102055344-c6e2360290d4 h1:+VMCzH+0FYgr79FjWCAokdMbhAffOo9ua/Aw1U4H05k=
+github.com/KogenAI/kogen-loop v0.0.0-20261102055344-c6e2360290d4/go.mod h1:xuHxDT/F3nJeem9k/bSAtkJBPpQVnHpM4T3Sm/rCzRg=
