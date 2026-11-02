@@ -187,7 +187,7 @@ func (pr Probe) Run(ctx context.Context, s *sys.Session) (ProbeResult, error) {
 		return ProbeResult{}, err
 	}
 	deadline, observer := probeDeadline, probeObserver
-	ps := sys.NewWith(probeEnv(s, home, hexHome), scratch)
+	ps := sys.NewWith(probeEnv(s, scratch, home, hexHome), scratch)
 	defer followInterrupt(s, ps)()
 	r, err := probeRun(ps, pr.Command, scratch, sys.Options{Context: ctx, Timeout: deadline, Env: pr.Tools.env(), KillGroupOnExit: true, RefuseForeignKill: true})
 	if errors.Is(err, sys.ErrTimeoutObservation) {
@@ -273,10 +273,11 @@ func privateHexHome(s *sys.Session) (string, error) {
 
 // probeEnv is the probe's whole environment, built from the caller session by allowlist: PATH,
 // locale, toolchain locations and Go caches, the caller's Mix home when it exists, HEX_HOME as the probe's
-// private Hex directory when hexHome is set, and HOME set to the probe's private empty home.
-// Nothing else the caller has set (credentials, tokens, shell startup or tool option selectors)
+// private Hex directory when hexHome is set, MISE_TRUSTED_CONFIG_PATHS naming the scratch copy
+// (then the caller's value after a colon, when it has one), and HOME set to the probe's private
+// empty home. Nothing else the caller has set (credentials, tokens, shell startup or tool option selectors)
 // is passed on.
-func probeEnv(s *sys.Session, home, hexHome string) []string {
+func probeEnv(s *sys.Session, scratch, home, hexHome string) []string {
 	var env []string
 	seen := map[string]bool{}
 	for i := len(s.Env) - 1; i >= 0; i-- {
@@ -294,6 +295,11 @@ func probeEnv(s *sys.Session, home, hexHome string) []string {
 	if hexHome != "" {
 		env = append(env, "HEX_HOME="+hexHome)
 	}
+	trusted := scratch
+	if caller := s.Getenv("MISE_TRUSTED_CONFIG_PATHS"); caller != "" {
+		trusted += ":" + caller
+	}
+	env = append(env, "MISE_TRUSTED_CONFIG_PATHS="+trusted)
 	return append(env, "HOME="+home)
 }
 

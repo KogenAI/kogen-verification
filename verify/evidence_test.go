@@ -331,6 +331,108 @@ func TestShapeProbeMinimalEnvironment(t *testing.T) {
 		t.Fatal("the caller's credential store changed")
 	}
 	requireNoLeftovers(t, tmp)
+
+	// The probe trusts its own scratch copy, followed by the caller's trusted paths when it has any.
+	const trustCommand = `echo "TRUST:$MISE_TRUSTED_CONFIG_PATHS"; echo "PWD:$(pwd)"`
+	for _, tc := range []struct{ name, caller, suffix string }{
+		{"caller without the variable", "", ""},
+		{"caller with an empty variable", "MISE_TRUSTED_CONFIG_PATHS=", ""},
+		{"caller with the variable", "MISE_TRUSTED_CONFIG_PATHS=/caller/trusted:/other", ":/caller/trusted:/other"},
+	} {
+		env := []string{"HOME=" + callerHome}
+		if tc.caller != "" {
+			env = append(env, tc.caller)
+		}
+		got, err := Probe{Root: p.Root, Command: trustCommand}.Run(context.Background(), sys.NewWith(testEnv(env...), p.Root))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var trust, pwd string
+		for _, line := range strings.Split(got.Output, "\n") {
+			if v, ok := strings.CutPrefix(line, "TRUST:"); ok {
+				trust = v
+			}
+			if v, ok := strings.CutPrefix(line, "PWD:"); ok {
+				pwd = v
+			}
+		}
+		scratch := trust[:strings.Index(trust+":", ":")]
+		if !strings.HasPrefix(scratch, tmp+"/kogen-probe-") || trust != scratch+tc.suffix {
+			t.Errorf("%s: MISE_TRUSTED_CONFIG_PATHS = %q, want the scratch copy%s", tc.name, trust, tc.suffix)
+		}
+		if resolved, err := filepath.EvalSymlinks(scratch); err != nil && fileExists(scratch) || pwd != scratch && pwd != resolved {
+			t.Errorf("%s: probe ran in %q, trusted %q", tc.name, pwd, scratch)
+		}
+	}
+	requireNoLeftovers(t, tmp)
+}
+
+// A control the tool manager trusts only at the project's own location passes as a probe, in the
+// probe's scratch copy, trusts nothing else, and still fails with its own status and output.
+func TestProbeTrustsTheProjectToolConfigurationOfItsScratchCopy(t *testing.T) {
+	tmp := isolateTmp(t)
+	p := newProj(t)
+	bin := t.TempDir()
+	shim := `#!/bin/sh
+trusted=no
+old=$IFS; IFS=:
+for dir in $MISE_TRUSTED_CONFIG_PATHS; do
+  case "$PWD/" in "$dir"/*) trusted=yes ;; esac
+done
+IFS=$old
+if [ ! -f .mise.toml ] || [ $trusted = no ]; then
+  echo "mise ERROR Config files in $PWD/.mise.toml are not trusted."
+  exit 1
+fi
+if [ "$1" = "--loud" ]; then
+  echo "greet: unknown option --loud"
+  exit 2
+fi
+echo "hello from the project tool"
+`
+	if err := os.WriteFile(filepath.Join(bin, "greet"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p.write(".mise.toml", "[tools]\n")
+	s := sys.NewWith(testEnv("PATH="+bin+":"+os.Getenv("PATH"), "MISE_TRUSTED_CONFIG_PATHS="+p.Root), p.Root)
+	run := func(command string) ProbeResult {
+		t.Helper()
+		got, err := Probe{Root: p.Root, Command: command}.Run(context.Background(), s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := run("greet"); got.Status != 0 || got.Output != "hello from the project tool\n" {
+		t.Fatalf("the control as a probe = %d %q", got.Status, got.Output)
+	}
+	if got := run("greet --loud"); got.Status != 2 || got.Output != "greet: unknown option --loud\n" {
+		t.Fatalf("the failing control as a probe = %d %q", got.Status, got.Output)
+	}
+	// The caller trusts only the project, so a copy elsewhere stays untrusted and the probe
+	// does not trust the filesystem root.
+	elsewhere := t.TempDir()
+	if err := os.WriteFile(filepath.Join(elsewhere, ".mise.toml"), []byte("[tools]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := run("cd '" + elsewhere + "' && greet"); got.Status != 1 || !strings.Contains(got.Output, "are not trusted.") {
+		t.Fatalf("a control outside the scratch copy = %d %q", got.Status, got.Output)
+	}
+
+	p.setFeasibility(capability("greeting", "greet", 0, "hello from the project tool\n", ".mise.toml"))
+	got, err := Execute(context.Background(), s, Tools{}, p.Root, p.Intent, p.Root, nil)
+	if err != nil {
+		t.Fatalf("the declared control passing in the project is met: %v", renderErr(err))
+	}
+	if len(got) != 1 || got[0].Checks[0].Exit != 0 {
+		t.Fatalf("obligations = %s", encode(got))
+	}
+	p.setFeasibility(capability("greeting", "greet --loud", 0, "hello from the project tool\n", ".mise.toml"))
+	_, err = Execute(context.Background(), s, Tools{}, p.Root, p.Intent, p.Root, nil)
+	if e, ok := sys.AsError(err); !ok || !strings.Contains(e.Render(), "greeting/support") || !strings.Contains(e.Render(), "greet: unknown option --loud") {
+		t.Fatalf("the refusal of a failing control = %v", err)
+	}
+	requireNoLeftovers(t, tmp)
 }
 
 // The private home is removed when the probe is refused or interrupted too.
@@ -487,4 +589,11 @@ func TestShapeProbeMixAndHexHomes(t *testing.T) {
 			requireNoLeftovers(t, tmp)
 		})
 	}
+}
+
+func renderErr(err error) string {
+	if e, ok := sys.AsError(err); ok {
+		return e.Render()
+	}
+	return err.Error()
 }
