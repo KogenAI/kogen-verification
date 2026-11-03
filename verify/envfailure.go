@@ -11,10 +11,22 @@ func EnvFailure(r CommandResult) (string, bool) {
 	if r.Status == 0 {
 		return "", false
 	}
-	for _, line := range strings.Split(r.Output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, goTestTimeoutPanic) ||
-			strings.Contains(line, "no space left on device") ||
+	inTest := false
+	for _, raw := range strings.Split(r.Output, "\n") {
+		raw = strings.TrimSuffix(raw, "\r")
+		if strings.HasPrefix(raw, "--- ") {
+			inTest = strings.HasPrefix(raw, "--- FAIL:")
+		} else if raw == "FAIL" || strings.HasPrefix(raw, "FAIL\t") || raw == "exit status 1" {
+			inTest = false
+		}
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, goTestTimeoutPanic) {
+			return line, true
+		}
+		if inTest {
+			continue
+		}
+		if strings.Contains(line, "no space left on device") ||
 			strings.Contains(line, "cannot allocate memory") ||
 			strings.Contains(line, "out of memory") ||
 			strings.Contains(line, "Out of memory: Killed process") ||

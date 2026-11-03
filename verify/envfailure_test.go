@@ -27,6 +27,21 @@ func TestEnvFailure(t *testing.T) {
 		{"timeout before resource", CommandResult{Status: 2, Output: "  panic: test timed out after 1s \nno space left on device"}, "panic: test timed out after 1s"},
 		{"resource before timeout", CommandResult{Status: 1, Output: "ordinary failure\n too many open files \npanic: test timed out after 1s"}, "too many open files"},
 		{"first resource", CommandResult{Status: 1, Output: "cannot allocate memory\nno space left on device"}, "cannot allocate memory"},
+		{"quoted memory", CommandResult{Status: 1, Output: "--- FAIL: TestMessage (0.00s)\n    message_test.go:12: want error containing \"out of memory\", got nil\nFAIL\nexit status 1\nFAIL\texample.com/m\t0.002s\n"}, ""},
+		{"quoted files", CommandResult{Status: 1, Output: "--- FAIL: TestMessage (0.00s)\n    message_test.go:12: want error containing \"too many open files\", got nil\nFAIL\nexit status 1\nFAIL\texample.com/m\t0.002s\n"}, ""},
+		{"logged OS error", CommandResult{Status: 1, Output: "--- FAIL: TestOpen (0.00s)\n    open_test.go:20: open /tmp/x: too many open files\nFAIL\nexit status 1\nFAIL\texample.com/m\t0.003s\n"}, ""},
+		{"fatal memory report", CommandResult{Status: 2, Output: "fatal error: runtime: out of memory\nexit status 2\nFAIL\texample.com/m\t0.120s\n"}, "fatal error: runtime: out of memory"},
+		{"tool allocation report", CommandResult{Status: 1, Output: "go: fork/exec /usr/bin/x: cannot allocate memory\n"}, "go: fork/exec /usr/bin/x: cannot allocate memory"},
+		{"disk report", CommandResult{Status: 1, Output: "write /tmp/x: no space left on device\n"}, "write /tmp/x: no space left on device"},
+		{"host after quote", CommandResult{Status: 1, Output: "--- FAIL: TestMessage (0.00s)\n    message_test.go:12: want error containing \"out of memory\", got nil\nFAIL\nexit status 1\nFAIL\texample.com/m\t0.002s\n  fatal error: runtime: out of memory\n"}, "fatal error: runtime: out of memory"},
+		{"plain report", CommandResult{Status: 1, Output: "--- FAIL: TestValue (0.00s)\n    value_test.go:12: want 1, got 0\nFAIL\nexit status 1\nFAIL\texample.com/m\t0.001s\n"}, ""},
+		{"unindented log", CommandResult{Status: 1, Output: "--- FAIL: TestLog (0.00s)\nfatal error: runtime: out of memory\nFAIL\n"}, ""},
+		{"indented header is log", CommandResult{Status: 1, Output: "--- FAIL: TestLog (0.00s)\n    --- PASS: TestOther (0.00s)\n    out of memory\nFAIL\n"}, ""},
+		{"next header", CommandResult{Status: 1, Output: "--- FAIL: TestLog (0.00s)\n    out of memory\n--- PASS: TestOther (0.00s)\nopen /tmp/x: too many open files\nFAIL\nexit status 1\nFAIL\texample.com/m\t0.001s\n"}, "open /tmp/x: too many open files"},
+		{"next failing header", CommandResult{Status: 1, Output: "--- FAIL: TestOne (0.00s)\n    out of memory\n--- FAIL: TestTwo (0.00s)\n    too many open files\nFAIL\n"}, ""},
+		{"bare fail boundary", CommandResult{Status: 1, Output: "--- FAIL: TestOne (0.00s)\n    out of memory\nFAIL\n  cannot allocate memory\n"}, "cannot allocate memory"},
+		{"exit boundary", CommandResult{Status: 1, Output: "--- FAIL: TestOne (0.00s)\n    out of memory\nexit status 1\n  cannot allocate memory\n"}, "cannot allocate memory"},
+		{"package boundary", CommandResult{Status: 1, Output: "--- FAIL: TestOne (0.00s)\n    out of memory\nFAIL\texample.com/m\t0.002s\n  cannot allocate memory\n"}, "cannot allocate memory"},
 		{"ordinary failure", CommandResult{Status: 1, Output: "--- FAIL: TestAppIsReady (0.00s)\nFAIL\n"}, ""},
 		{"zero status", CommandResult{Status: 0, Output: timedOut}, ""},
 		{"not at the line start", CommandResult{Status: 1, Output: "log: panic: test timed out after 10m0s\n"}, ""},
@@ -34,6 +49,10 @@ func TestEnvFailure(t *testing.T) {
 		got, ok := EnvFailure(c.result)
 		if got != c.want || ok != (c.want != "") {
 			t.Errorf("%s: EnvFailure = %q, %v; want %q", c.name, got, ok, c.want)
+		}
+		c.result.Status = 0
+		if got, ok := EnvFailure(c.result); got != "" || ok {
+			t.Errorf("%s with zero status: EnvFailure = %q, %v; want empty, false", c.name, got, ok)
 		}
 	}
 }
