@@ -524,3 +524,42 @@ func TestObservationsKeepFirstFailureBeforeLongSkippedListings(t *testing.T) {
 		contains(t, name, text, "bytes omitted")
 	}
 }
+
+func TestPassingAttemptEvidenceSurvivesScratchButIsNotReadiness(t *testing.T) {
+	tmp := isolateTmp(t)
+	p := newProj(t)
+	p.Config.Setup = []string{"echo setup"}
+	r := p.readiness()
+	r.Attempt = NewAttempt(p.Root, fixtureSlug, nil)
+	s, _ := p.session()
+	if _, err := r.Check(context.Background(), s, fixtureSlug); err != nil {
+		t.Fatal(err)
+	}
+	requireNoLeftovers(t, tmp)
+	paths, err := filepath.Glob(filepath.Join(attemptsDir(p.Root), "*", "attempt.json"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("attempt paths: %v, %v", paths, err)
+	}
+	b, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec attemptRecord
+	if err := json.Unmarshal(b, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome != "passed" || rec.Failure != nil || len(rec.NotRun) != 0 || len(rec.Steps) != len(r.Attempt.steps) {
+		t.Fatalf("attempt: %+v", rec)
+	}
+	for i, st := range rec.Steps {
+		if st.Name != r.Attempt.steps[i].Name || st.StartedAt == "" || st.EndedAt == "" {
+			t.Fatalf("step: %+v", st)
+		}
+	}
+	if err := os.Remove(readinessPath(p.Root, fixtureSlug)); err != nil {
+		t.Fatal(err)
+	}
+	if r.Cached(s, fixtureSlug) != nil {
+		t.Fatal("diagnostic attempt was reused as readiness")
+	}
+}

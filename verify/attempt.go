@@ -35,21 +35,25 @@ func ContractShapeAcceptanceDeadline(d time.Duration) (time.Duration, func()) {
 // AttemptStep is one executed step of an approval attempt. Steps that were not reached are
 // never recorded as steps: they are only named in NotRun.
 type AttemptStep struct {
-	Name       string `json:"name"`
-	Kind       string `json:"kind"` // git, setup, feasibility, model, acceptance, check
-	Command    string `json:"command,omitempty"`
-	Status     string `json:"status"` // passed, failed, timed_out
-	Exit       *int   `json:"exit,omitempty"`
-	TimedOut   bool   `json:"timed_out"`
-	StartMS    int64  `json:"start_ms"`
-	DurationMS int64  `json:"duration_ms"`
+	Name       string    `json:"name"`
+	Kind       string    `json:"kind"` // git, setup, feasibility, model, acceptance, check
+	Command    string    `json:"command,omitempty"`
+	Status     string    `json:"status"` // passed, failed, timed_out
+	Exit       *int      `json:"exit,omitempty"`
+	TimedOut   bool      `json:"timed_out"`
+	StartMS    int64     `json:"start_ms"`
+	DurationMS int64     `json:"duration_ms"`
+	StartedAt  string    `json:"started_at"`
+	EndedAt    string    `json:"ended_at"`
+	LoadStart  *hostLoad `json:"load_start"`
+	LoadEnd    *hostLoad `json:"load_end"`
 	// Output is the redacted combined stdout and stderr of a step that did not pass, capped
 	// like the run log (1 MiB, the middle cut out).
 	Output string `json:"output,omitempty"`
 }
 
 // Attempt is the account of one approval's readiness check: the steps that actually ran,
-// their wall times and statuses, and, when the check is refused, the private local evidence
+// their wall times and statuses, and the private local evidence
 // kept for inspection. It is diagnostic custody only: it never makes a task ready and is
 // never read as readiness evidence.
 type Attempt struct {
@@ -123,7 +127,10 @@ func (a *Attempt) blame(name string) {
 	a.mu.Unlock()
 }
 
-func (a *Attempt) add(st *AttemptStep, began time.Time, elapsed time.Duration) {
+func (a *Attempt) add(st *AttemptStep, began, ended time.Time) {
+	st.StartedAt = began.UTC().Format(time.RFC3339Nano)
+	st.EndedAt = ended.UTC().Format(time.RFC3339Nano)
+	elapsed := ended.Sub(began)
 	st.StartMS = began.Sub(a.started).Milliseconds()
 	st.DurationMS = elapsed.Milliseconds()
 	a.mu.Lock()
@@ -146,12 +153,14 @@ func (e *stepTimeout) Error() string { return "step " + e.step.Name + " timed ou
 func (a *Attempt) run(ctx context.Context, s *sys.Session, command, script, dir string, env map[string]string) (sys.Result, error) {
 	label := stepFrom(ctx)
 	st := &AttemptStep{Name: label.name, Kind: label.kind, Command: a.Redact(command)}
+	st.LoadStart = sampleHostLoad()
 	began := time.Now()
 	res, err := s.Run(script, dir, sys.Options{Env: env, KillGroupOnExit: true, Timeout: a.timeout, Context: ctx})
-	elapsed := time.Since(began)
+	ended := time.Now()
+	st.LoadEnd = sampleHostLoad()
 	if errors.Is(err, sys.ErrTimeoutObservation) {
 		st.Status, st.TimedOut = "timed_out", true
-		a.add(st, began, elapsed)
+		a.add(st, began, ended)
 		return sys.Result{}, &stepTimeout{step: st, unknown: true}
 	}
 	if err != nil {
@@ -171,7 +180,7 @@ func (a *Attempt) run(ctx context.Context, s *sys.Session, command, script, dir 
 	if st.Status != "passed" {
 		st.Output = Cap(res.Output)
 	}
-	a.add(st, began, elapsed)
+	a.add(st, began, ended)
 	if res.TimedOut {
 		return res, &stepTimeout{step: st}
 	}
@@ -184,22 +193,25 @@ func (a *Attempt) Observe(name, kind string, fn func() error) error {
 	if a == nil {
 		return fn()
 	}
+	loadStart := sampleHostLoad()
 	began := time.Now()
 	err := fn()
-	a.record(name, kind, began, err)
+	ended := time.Now()
+	loadEnd := sampleHostLoad()
+	a.record(name, kind, began, ended, loadStart, loadEnd, err)
 	return err
 }
 
-// record notes a step without a command that ran from began until now and failed when err is not nil.
-func (a *Attempt) record(name, kind string, began time.Time, err error) {
+// record notes a step without a command that ran between the supplied boundaries.
+func (a *Attempt) record(name, kind string, began, ended time.Time, loadStart, loadEnd *hostLoad, err error) {
 	if a == nil {
 		return
 	}
-	st := &AttemptStep{Name: name, Kind: kind, Status: "passed"}
+	st := &AttemptStep{Name: name, Kind: kind, Status: "passed", LoadStart: loadStart, LoadEnd: loadEnd}
 	if err != nil {
 		st.Status = "failed"
 	}
-	a.add(st, began, time.Since(began))
+	a.add(st, began, ended)
 }
 
 func (a *Attempt) executed(name string) bool {
@@ -213,21 +225,21 @@ func (a *Attempt) executed(name string) bool {
 
 func fmtSeconds(ms int64) string { return fmt.Sprintf("%.1fs", float64(ms)/1000) }
 
-// attemptRecord is the retained evidence of a refused attempt, `attempt.json` in its own
+// attemptRecord is the retained evidence of an attempt, `attempt.json` in its own
 // private folder under .kogen/local/readiness/attempts. Its kind and outcome tell it apart
 // from the version 3 readiness record `<slug>.json`, which it never is.
 type attemptRecord struct {
-	Version         int            `json:"version"`
-	Kind            string         `json:"kind"`
-	Outcome         string         `json:"outcome"`
-	Slug            string         `json:"slug"`
-	StartedAt       string         `json:"started_at"`
-	StepTimeoutSecs int            `json:"step_timeout_seconds"`
-	ElapsedMS       int64          `json:"elapsed_ms"`
-	Steps           []*AttemptStep `json:"steps"`
-	NotRun          []string       `json:"not_run"`
-	Failure         attemptFailure `json:"failure"`
-	Note            string         `json:"note"`
+	Version         int             `json:"version"`
+	Kind            string          `json:"kind"`
+	Outcome         string          `json:"outcome"`
+	Slug            string          `json:"slug"`
+	StartedAt       string          `json:"started_at"`
+	StepTimeoutSecs int             `json:"step_timeout_seconds"`
+	ElapsedMS       int64           `json:"elapsed_ms"`
+	Steps           []*AttemptStep  `json:"steps"`
+	NotRun          []string        `json:"not_run"`
+	Failure         *attemptFailure `json:"failure,omitempty"`
+	Note            string          `json:"note"`
 }
 
 type attemptFailure struct {
@@ -239,10 +251,7 @@ type attemptFailure struct {
 	Lines    []string `json:"lines,omitempty"`
 }
 
-// ContentionNote is the honest limit of what elapsed time shows.
-const ContentionNote = "Elapsed time alone cannot tell host contention from a hang, so Kogen names no cause for the stop."
-
-// attemptsDir holds one private folder per refused attempt.
+// attemptsDir holds one private folder per attempt.
 func attemptsDir(root string) string {
 	return filepath.Join(root, ".kogen/local/readiness/attempts")
 }
@@ -325,7 +334,7 @@ func (a *Attempt) Refuse(err error) error {
 		lines = append(lines, "Not run: "+strings.Join(notRun, ", "))
 	}
 	if timeout != nil {
-		lines = append(lines, ContentionNote)
+		lines = append(lines, timeoutLoad(failing))
 	}
 	for i, l := range lines {
 		lines[i] = a.Redact(l)
@@ -393,8 +402,12 @@ func (a *Attempt) retain(refusal *sys.Error, steps []*AttemptStep, notRun []stri
 		StepTimeoutSecs: int(a.timeout / time.Second),
 		ElapsedMS:       time.Since(a.started).Milliseconds(),
 		Steps:           steps, NotRun: notRun,
-		Failure: attemptFailure{Class: refusal.Class, Reason: refusal.Reason, Detail: refusal.Detail, Step: blamed, TimedOut: timedOut, Lines: lines},
-		Note:    "Private local diagnostic evidence of a refused approval check; it is not readiness evidence and not approval. " + ContentionNote,
+		Note: "Private local diagnostic evidence of an approval check; it is not readiness evidence and not approval.",
+	}
+	if refusal != nil {
+		rec.Failure = &attemptFailure{Class: refusal.Class, Reason: refusal.Reason, Detail: refusal.Detail, Step: blamed, TimedOut: timedOut, Lines: lines}
+	} else {
+		rec.Outcome = "passed"
 	}
 	b, err := project.EncodeJSON(rec)
 	if err != nil {
@@ -413,4 +426,21 @@ func (a *Attempt) retain(refusal *sys.Error, steps []*AttemptStep, notRun []stri
 		return "", werr
 	}
 	return path, nil
+}
+
+func timeoutLoad(st *AttemptStep) string {
+	format := func(v *hostLoad) string {
+		if v == nil {
+			return "unavailable"
+		}
+		return fmt.Sprintf("1-minute %.2f, 5-minute %.2f", v.Load1, v.Load5)
+	}
+	return fmt.Sprintf("Host load at start: %s; at end: %s. Load alone does not establish the cause.", format(st.LoadStart), format(st.LoadEnd))
+}
+
+func (a *Attempt) retainPass() {
+	a.mu.Lock()
+	steps := append([]*AttemptStep(nil), a.steps...)
+	a.mu.Unlock()
+	_, _ = a.retain(nil, steps, nil, "", false, nil)
 }

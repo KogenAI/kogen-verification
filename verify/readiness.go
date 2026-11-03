@@ -41,7 +41,7 @@ type Readiness struct {
 	// BeforeRecord); its error stops the check with nothing recorded.
 	Gate func(*Ready) error
 	// Attempt, when set (an approval), bounds every executed command step by StepTimeout,
-	// records the steps that ran and keeps private evidence of a refusal.
+	// records the steps that ran and keeps private diagnostic evidence.
 	Attempt *Attempt
 	// BoundShapeAcceptance applies the approval acceptance command limit to Shape.
 	BoundShapeAcceptance bool
@@ -308,6 +308,8 @@ func (r *Readiness) Check(ctx context.Context, s *sys.Session, slug string) (rea
 		defer func() {
 			if err != nil {
 				err = a.Refuse(err)
+			} else {
+				a.retainPass()
 			}
 		}()
 	}
@@ -461,11 +463,20 @@ func (r *Readiness) stepAnalysis(ctx context.Context, s *sys.Session, dir string
 	if len(own) == 0 || node == "" || cucumber == "" {
 		return nil, nil, nil
 	}
+	var loadStart *hostLoad
+	if r.Attempt != nil {
+		loadStart = sampleHostLoad()
+	}
 	began := time.Now()
 	raw, loaded, err := RunStepScript(ctx, node, cucumber, dir, s.Env, files, texts)
+	ended := time.Now()
+	var loadEnd *hostLoad
+	if r.Attempt != nil {
+		loadEnd = sampleHostLoad()
+	}
 	if loaded || err != nil {
 		// A check that could not even load did not run: it is not a step.
-		r.Attempt.record("step-analysis", "check", began, err)
+		r.Attempt.record("step-analysis", "check", began, ended, loadStart, loadEnd, err)
 	}
 	if err != nil || !loaded {
 		return nil, nil, err

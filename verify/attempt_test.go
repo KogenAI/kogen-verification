@@ -33,7 +33,7 @@ func TestAttemptBoundsEachStepAndKeepsEvidence(t *testing.T) {
 		t.Fatalf("error = %v, want a step timeout refusal", refusal)
 	}
 	text := e.Render()
-	for _, want := range []string{"setup-3", "timed out after 1.", "started-then-blocked", "setup-1: passed in 0.", "Not run: acceptance", "names no cause", "Evidence: "} {
+	for _, want := range []string{"setup-3", "timed out after ", "started-then-blocked", "setup-1: passed in 0.", "Not run: acceptance", "does not establish the cause", "Evidence: "} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the refusal lacks %q:\n%s", want, text)
 		}

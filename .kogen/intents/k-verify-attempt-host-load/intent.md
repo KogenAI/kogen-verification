@@ -1,0 +1,38 @@
+# Retain approval step host load evidence
+
+Slug: k-verify-attempt-host-load
+Model: not applicable — diagnostic measurements extend existing attempt records without introducing a new workflow or readiness state
+Acceptance:
+- .kogen/intents/k-verify-attempt-host-load/acceptance.feature
+- features/steps/hostload_steps.js
+- features/steps/hostload_observer.js
+- features/steps/testdata/hostload/driver.go
+
+Retain per-step absolute start/end instants and host load at both boundaries in private approval attempt evidence, for passing as well as refused Readiness.Check calls with an Attempt. Preserve existing relative start_ms, duration_ms, elapsed_ms, statuses, not_run, redaction, process-group handling and readiness semantics. Every actually recorded step is measured, including Git snapshot/materialize, setup, acceptance, model, feasibility and step-analysis when executed. Never fabricate steps for not_run. Passing evidence survives scratch workspace removal, under .kogen/local/readiness/attempts/<unique-id>/attempt.json just like refused evidence, with kind approval_attempt and outcome passed (refused remains refused). It is diagnostic evidence only, never approval or reusable readiness evidence. Keep private directory/file permissions 0700/0600 and unique attempts. Failure to read load must not refuse a passing approval or replace its real failure.
+
+## Decisions
+- Keep the 120-second per-command StepTimeout unchanged; no setting, timeout increase or automatic rescue. (source: request)
+- Retain measurements and show measured load or explicitly unavailable in timeout refusals, without automatic quiet-baseline ratios or causal attribution; leave corpus comparison to subsequent analysis. (source: answer 1)
+- Use Linux /proc/loadavg and Darwin sysctl vm.loadavg in a small new helper; no provider dependencies or changes to verify/probe.go, verify/sweep.go, verify/run.go or shaping. Minimal Readiness.Check wiring is needed to retain passes. (source: request)
+- Timeout text reports the failing step's start/end 1- and 5-minute readings to two decimal places, labels both intervals and both boundaries, and states that load alone “does not establish the cause”. Unavailable boundaries are explicitly labeled unavailable, never represented as zero. Preserve stop details, wall-time list, not-run list and retained-evidence location. (source: answer 1)
+
+JSON contract: each recorded step adds started_at and ended_at as UTC RFC3339Nano strings, plus load_start and load_end. A successful load sample is {"load1": <nonnegative finite number>, "load5": <nonnegative finite number>}; unavailable samples are JSON null (keys remain present). Sample immediately around the operation, including Observe operations and command timeout/unknown-process-group paths. Preserve monotonic wall duration calculation; absolute timestamps describe the same span (millisecond rounding tolerance). Do not substitute attempt creation time or retention time for per-step boundaries. Passing records carry the existing total and all executed steps, empty not_run, no fabricated failure and a note identifying private diagnostic evidence, not readiness. Preserve historical record readability. Read failures, malformed readings and unsupported platforms yield unavailable; do not introduce retries, configuration or a new production abstraction solely for mocking. Darwin collection must be bounded so a diagnostic sysctl cannot hang an attempt. Update only deliberately changed golden outputs using the documented -update procedure; preserve golden inputs and historical records.
+
+## Source comparison
+- Addressed: request Need and Problem -> all-step boundary/load JSON contract and durable evidence for both outcomes above; Tests and acceptance cover real Readiness.Check, including the dynamically observed executed-step list rather than four steps. Build 329eb23c's fixed-four assumption is explicitly superseded: step-analysis, when configured, must also be measured.
+- Addressed: Independence -> scoped helper/attempt changes and necessary pass-publication wiring only; prohibited probe/sweep/run/shaping work remains out of scope. README golden update conventions remain binding.
+- Superseded: Need's illustrative “every step took X times its quiet wall” -> answer 1 explicitly defers ratios/baseline selection; high load is evidence, not proof of cause. Replace the elapsed-only ContentionNote where timeout output now has measured load, retaining its honest noncausal limit.
+- Addressed as historical motivation, not fabricated experiment: request Evidence describes eight voided fbc1o/fbc1o2/Studio cells at load 16–31 on 2 Nov, acceptance 120.3–130.7s and materialize 49–292s versus quiet load5 about 10 with acceptance 4.1–5.7s and materialize proxy about 1.9s (25–150x together); coordinator's eight timeouts among 200 cells; loop's 408s turn and two 6–7 minute stalls; eu2 passes 41–50s without retained splits. No cell outcome change is claimed (Not shown). Executable acceptance exercises the same missing evidence classes, not those inaccessible historical hosts or asserted causal ratios. Observer controls use synthetic load 16/31 and 17/30, explicitly not historical measurements.
+- Omitted deliberately: new baseline machinery, CPU normalization, host-stall classification, scheduling, rescue or outcome changes. Answer 1 limits this batch to an evidence gap.
+
+## Tests
+- Capture both boundary instants and 1/5-minute loads on every executed step: real Readiness.Check passing, ordinary failure and contracted timeout harness with retained JSON compared to its actual executed names (integration)
+- Preserve passing per-step evidence after scratch deletion, without making it reusable approval evidence: passing Readiness.Check harness and existing readiness custody tests (regression)
+- Read Linux and Darwin load formats and represent unavailable independently at each boundary: focused helper parser/collection tests for valid readings, unavailable read, malformed data and unsupported platform, plus Darwin compile check during implementation (unit)
+- Render measured or unavailable timeout load with no causal attribution while preserving refusal semantics: update TestAttemptBoundsEachStepAndKeepsEvidence and refusal goldens, add deterministic available/unavailable timeout formatting cases (regression)
+- Preserve the 120-second bound and existing redaction, interruptions and process cleanup: existing attempt and readiness tests unchanged except deliberate new diagnostics (existing)
+
+## Feasibility
+- Linux manual retrieved via documentation tool: https://man7.org/linux/man-pages/man5/proc_loadavg.5.html describes first three fields as 1/5/15-minute runnable or disk-I/O-wait load. Search results were not useful; this fetched manual is the technical reference. Darwin source fetch https://raw.githubusercontent.com/apple-oss-distributions/system_cmds/main/sysctl.tproj/sysctl.c returned unsupported; no Darwin execution or source retrieval is claimed. Parse sysctl's brace-delimited three-number vm.loadavg form; deterministic parser fixtures and supported-platform compilation are required, not a claim of live Darwin qualification.
+- Local probe observed /proc/loadavg as `0.07 0.33 1.97 1/188 1283753` and a node executable; no host-load causal experiment was run (exit 0).
+- evidence: {"id":"hostload-observer","kind":"observer","inputs":["features/steps/hostload_observer.js"],"observers":["features/steps/hostload_observer.js"],"checks":[{"name":"good","command":"node features/steps/hostload_observer.js good","exit":0,"output":"observer accepted\n"},{"name":"bad","command":"node features/steps/hostload_observer.js bad","exit":1,"output":"observer rejected\n"}]}
