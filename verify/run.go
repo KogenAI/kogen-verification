@@ -15,20 +15,21 @@ import (
 
 // Input is everything one verification pass needs.
 type Input struct {
-	Root             string              // the user's checkout
-	Repo             *git.Repo           // Git at Root; nil: git.New(Root, session env)
-	Config           *project.Config     // the project's commands
-	Intent           *project.Intent     // the Intent being built; its Model is the model to check
-	MaintainedModels []project.ModelSpec // explicitly supplied maintained specifications
-	Start            string              // the HEAD the Build started from
-	Excluded         []string            // other uncommitted Intents' folders, left out of the candidate
-	N                int                 // the pass number
-	RunDir           string              // the run's evidence folder: acceptance-N.ndjson goes there
-	Tools            Tools
-	Log              Logger
-	Evidence         Evidence
+	Root               string              // the user's checkout
+	Repo               *git.Repo           // Git at Root; nil: git.New(Root, session env)
+	Config             *project.Config     // the project's commands
+	Intent             *project.Intent     // the Intent being built; its Model is the model to check
+	MaintainedModels   []project.ModelSpec // explicitly supplied maintained models
+	MaintainedFeatures []string            // explicitly supplied repository-relative feature paths
+	Start              string              // the HEAD the Build started from
+	Excluded           []string            // other uncommitted Intents' folders, left out of the candidate
+	N                  int                 // the pass number
+	RunDir             string              // the run's evidence folder: acceptance-N.ndjson goes there
+	Tools              Tools
+	Log                Logger
+	Evidence           Evidence
 	// Stage, when set, makes the pass a scoped stage gate: the setup commands, then only the
-	// stage's checks (named stage-<id>-<n>). Acceptance, the model and the project's checks
+	// stage's checks (named stage-<id>-<n>). Acceptance, models, maintained features and the project's checks
 	// are not part of it, so such a pass is never whole-Intent proof.
 	Stage *Stage
 	// Intact is the baseline guard (VER-8): it returns the refusal when the approved baseline
@@ -103,8 +104,8 @@ type item struct {
 
 // Verify runs one pass over the current candidate (VER-6, VER-7, VER-9): the exact clean
 // candidate tree is materialized into a `kogen-verify-*` scratch directory with a synthetic
-// Git; setup commands run in order, then acceptance, the applicable model and the project's
-// checks in declaration order, stopping between items at the first definitive red. The
+// Git; setup commands run in order, then acceptance, the applicable model, maintained models, maintained features in supplied
+// order, and the project's checks in declaration order, stopping between items at the first definitive red. The
 // later items are named in NotRun. Files that changed in the scratch inputs or in the
 // checkout while the checks ran make the pass not green. The scratch directory is removed
 // whatever happens.
@@ -141,6 +142,9 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 		for _, m := range in.MaintainedModels {
 			items = append(items, item{m.Path, "maintained", ""})
 		}
+		for _, f := range in.MaintainedFeatures {
+			items = append(items, item{f, "feature", ""})
+		}
 		for _, c := range in.Config.Checks {
 			items = append(items, item{c.Name, "check", c.Run})
 		}
@@ -150,6 +154,9 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 	if in.Stage == nil {
 		for _, m := range in.MaintainedModels {
 			p.MaintainedModels = append(p.MaintainedModels, MaintainedModelResult{Path: m.Path, Result: ModelNotRun})
+		}
+		for _, f := range in.MaintainedFeatures {
+			p.MaintainedFeatures = append(p.MaintainedFeatures, MaintainedFeatureResult{Path: f})
 		}
 	}
 	if model == nil {
@@ -167,6 +174,7 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 		}
 		red := false
 		maintainedIndex := 0
+		featureIndex := 0
 		for index := 0; index < len(items); index++ {
 			it := items[index]
 			if red {
@@ -208,6 +216,15 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 					return nil, false, err
 				}
 				p.Acceptance = &a
+				red = len(a.Problems) > 0
+			case "feature":
+				featureReport := fmt.Sprintf("%s-feature-%d.ndjson", report, featureIndex+1)
+				a, err := runFeature(ctx, s, scratch, in.Tools, it.name, in.acceptanceRun(), featureReport, in.Evidence, in.Log, true)
+				if err != nil {
+					return nil, false, err
+				}
+				p.MaintainedFeatures[featureIndex].Result = &a
+				featureIndex++
 				red = len(a.Problems) > 0
 			case "maintained":
 				m, err := CheckModel(ctx, s, scratch, in.Tools, &in.MaintainedModels[maintainedIndex], in.Evidence, in.Log)
@@ -275,6 +292,11 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 			p.Failing = append(p.Failing, m.Path)
 		}
 	}
+	for _, f := range p.MaintainedFeatures {
+		if f.Result != nil && len(f.Result.Problems) > 0 {
+			p.Failing = append(p.Failing, f.Path)
+		}
+	}
 	for _, c := range slices.Concat(p.Setup, p.Checks) {
 		if c.Status != 0 {
 			p.Failing = append(p.Failing, c.Name)
@@ -316,18 +338,30 @@ func runLogged(ctx context.Context, s *sys.Session, in Input, dir, name, command
 // before command_result. On Linux a per-run subreaper also stops descendants that carry neither
 // marker.
 func RunAcceptance(ctx context.Context, s *sys.Session, root string, tools Tools, slug, command, report string, ev Evidence, log Logger) (Acceptance, error) {
+	return runFeature(ctx, s, root, tools, project.FeaturePath(slug), command, report, ev, log, false)
+}
+
+func runFeature(ctx context.Context, s *sys.Session, root string, tools Tools, feature, command, report string, ev Evidence, log Logger, maintained bool) (Acceptance, error) {
 	count(ev, "acceptance")
-	feature := project.FeaturePath(slug)
 	text, err := os.ReadFile(filepath.Join(root, feature))
 	if err != nil {
+		if maintained {
+			return Acceptance{Status: 1, Scenarios: []ScenarioResult{}, Problems: []string{err.Error()}, BindingProblems: []string{}}, nil
+		}
 		return Acceptance{}, err
 	}
 	expected, err := project.ParseGherkin(string(text))
 	if err != nil {
+		if maintained {
+			return Acceptance{Status: 1, Scenarios: []ScenarioResult{}, Problems: []string{fmt.Sprintf("%s: %v", feature, err)}, BindingProblems: []string{}}, nil
+		}
 		return Acceptance{}, fmt.Errorf("%s: %w", feature, err)
 	}
 	os.Remove(report)
 	if err := os.MkdirAll(filepath.Dir(report), 0o755); err != nil {
+		if maintained {
+			return Acceptance{Status: 1, Scenarios: []ScenarioResult{}, Problems: []string{err.Error()}, BindingProblems: []string{}}, nil
+		}
 		return Acceptance{}, err
 	}
 	logEvent(log, map[string]any{"event": "command", "name": "acceptance", "command": command})

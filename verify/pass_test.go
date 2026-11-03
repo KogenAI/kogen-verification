@@ -324,3 +324,26 @@ func TestCapPreservesUTF8AndFitsInAMebibyteIncludingItsMarker(t *testing.T) {
 		}
 	}
 }
+
+func TestMaintainedFeatureRoundTrip(t *testing.T) {
+	detail := "failure detail"
+	p := Pass{Model: ModelNone, MaintainedFeatures: []MaintainedFeatureResult{
+		{Path: "red.feature", Result: &Acceptance{Status: 1, Scenarios: []ScenarioResult{{Name: "First", Status: "failed", Detail: &detail}}, Problems: []string{"First: failure detail"}, BindingProblems: []string{}}},
+		{Path: "later.feature"},
+	}}
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Pass
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.MaintainedFeatures) != 2 || got.MaintainedFeatures[0].Result == nil || *got.MaintainedFeatures[0].Result.Scenarios[0].Detail != detail || got.MaintainedFeatures[1].Result != nil {
+		t.Fatalf("round trip: %+v", got.MaintainedFeatures)
+	}
+	data2, err := json.Marshal(got)
+	if err != nil || string(data) != string(data2) {
+		t.Fatalf("round trip bytes: %s != %s: %v", data, data2, err)
+	}
+}

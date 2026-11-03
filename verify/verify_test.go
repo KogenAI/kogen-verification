@@ -452,6 +452,7 @@ func TestMaintainedModelsFirstRedAndStage(t *testing.T) {
 			}
 			in := p.input(1)
 			in.Intent.Model = &project.ModelSpec{Path: "own.qnt"}
+			in.MaintainedFeatures = []string{"spec/unused.feature"}
 			in.MaintainedModels = []project.ModelSpec{{Path: "first.qnt", Invariants: []string{"X"}, Seed: "1", Samples: "2", Steps: "3"}, {Path: "later.qnt"}}
 			in.Tools.Node, in.Tools.Quint = tool, "quint"
 			p.Config.Checks = []project.Check{{Name: "after", Run: "true"}}
@@ -465,12 +466,12 @@ func TestMaintainedModelsFirstRedAndStage(t *testing.T) {
 			}
 			switch mode {
 			case "acceptance":
-				eqSlice(t, "not run", pass.NotRun, []string{"model", "first.qnt", "later.qnt", "after"})
+				eqSlice(t, "not run", pass.NotRun, []string{"model", "first.qnt", "later.qnt", "spec/unused.feature", "after"})
 			case "model":
-				eqSlice(t, "not run", pass.NotRun, []string{"first.qnt", "later.qnt", "after"})
+				eqSlice(t, "not run", pass.NotRun, []string{"first.qnt", "later.qnt", "spec/unused.feature", "after"})
 			case "maintained":
 				eqSlice(t, "failing", pass.Failing, []string{"first.qnt"})
-				eqSlice(t, "not run", pass.NotRun, []string{"later.qnt", "after"})
+				eqSlice(t, "not run", pass.NotRun, []string{"later.qnt", "spec/unused.feature", "after"})
 				contains(t, "feedback", pass.Feedback("", ""), "first.qnt")
 				contains(t, "feedback", pass.Feedback("", ""), "maintained-error")
 				calls, _ := os.ReadFile(trace)
@@ -490,7 +491,7 @@ func TestMaintainedModelsFirstRedAndStage(t *testing.T) {
 					t.Fatalf("round trip: %+v", decoded.MaintainedModels)
 				}
 			case "stage":
-				if !pass.Green || pass.Acceptance != nil || len(pass.MaintainedModels) != 0 {
+				if !pass.Green || pass.Acceptance != nil || len(pass.MaintainedModels) != 0 || len(pass.MaintainedFeatures) != 0 {
 					t.Fatalf("stage: %+v", pass)
 				}
 				if _, err := os.Stat(trace); !os.IsNotExist(err) {

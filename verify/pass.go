@@ -24,25 +24,62 @@ type MaintainedModelResult struct {
 	Result ModelResult `json:"result"`
 }
 
+// MaintainedFeatureResult records an acceptance result, or nil when not run.
+type MaintainedFeatureResult struct {
+	Path   string      `json:"path"`
+	Result *Acceptance `json:"-"`
+}
+
+func (m MaintainedFeatureResult) MarshalJSON() ([]byte, error) {
+	var result any = "not_run"
+	if m.Result != nil {
+		result = m.Result
+	}
+	return json.Marshal(struct {
+		Path   string `json:"path"`
+		Result any    `json:"result"`
+	}{m.Path, result})
+}
+
+func (m *MaintainedFeatureResult) UnmarshalJSON(data []byte) error {
+	var v struct {
+		Path   string          `json:"path"`
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	m.Path, m.Result = v.Path, nil
+	if string(v.Result) != `"not_run"` {
+		var a Acceptance
+		if err := json.Unmarshal(v.Result, &a); err != nil {
+			return err
+		}
+		m.Result = &a
+	}
+	return nil
+}
+
 // Pass is one verification pass over the exact clean candidate Tree (VER-6 .. VER-9). Its
 // JSON is what Kogen records for a pass: `acceptance` is `"not_run"` or the acceptance
 // object, `model` is `"none"`, `"not_run"`, `{"ok":[]}` or `{"failed":[...]}`, and `not_run`
 // names the required items an earlier failure kept from running.
 type Pass struct {
-	N                int
-	Clean            bool
-	Green            bool
-	Tree             string
-	Setup            []CommandResult
-	Acceptance       *Acceptance // nil: not run
-	Model            ModelResult
-	MaintainedModels []MaintainedModelResult
-	Checks           []CommandResult
-	Speculative      []CommandResult
-	Cancelled        []CommandResult
-	NotRun           []string
-	Moved            []string
-	Failing          []string
+	N                  int
+	Clean              bool
+	Green              bool
+	Tree               string
+	Setup              []CommandResult
+	Acceptance         *Acceptance // nil: not run
+	Model              ModelResult
+	MaintainedModels   []MaintainedModelResult
+	MaintainedFeatures []MaintainedFeatureResult
+	Checks             []CommandResult
+	Speculative        []CommandResult
+	Cancelled          []CommandResult
+	NotRun             []string
+	Moved              []string
+	Failing            []string
 
 	// Legacy marks a recorded pass from before `setup` and `not_run` existed: complete clean
 	// evidence of that kind stays reusable (VER-7).
@@ -50,20 +87,21 @@ type Pass struct {
 }
 
 type passJSON struct {
-	N                int                     `json:"n"`
-	Clean            bool                    `json:"clean"`
-	Green            bool                    `json:"green"`
-	Tree             string                  `json:"tree"`
-	Setup            any                     `json:"setup,omitempty"` // absent in a legacy record
-	Acceptance       any                     `json:"acceptance"`
-	Model            any                     `json:"model"`
-	MaintainedModels []MaintainedModelResult `json:"maintained_models,omitempty"`
-	Checks           []CommandResult         `json:"checks"`
-	Speculative      []CommandResult         `json:"speculative,omitempty"`
-	Cancelled        []CommandResult         `json:"cancelled,omitempty"`
-	NotRun           any                     `json:"not_run,omitempty"` // absent in a legacy record
-	Moved            []string                `json:"moved"`
-	Failing          []string                `json:"failing"`
+	N                  int                       `json:"n"`
+	Clean              bool                      `json:"clean"`
+	Green              bool                      `json:"green"`
+	Tree               string                    `json:"tree"`
+	Setup              any                       `json:"setup,omitempty"` // absent in a legacy record
+	Acceptance         any                       `json:"acceptance"`
+	Model              any                       `json:"model"`
+	MaintainedModels   []MaintainedModelResult   `json:"maintained_models,omitempty"`
+	MaintainedFeatures []MaintainedFeatureResult `json:"maintained_features,omitempty"`
+	Checks             []CommandResult           `json:"checks"`
+	Speculative        []CommandResult           `json:"speculative,omitempty"`
+	Cancelled          []CommandResult           `json:"cancelled,omitempty"`
+	NotRun             any                       `json:"not_run,omitempty"` // absent in a legacy record
+	Moved              []string                  `json:"moved"`
+	Failing            []string                  `json:"failing"`
 }
 
 func nonNil[T any](s []T) []T {
@@ -76,7 +114,7 @@ func nonNil[T any](s []T) []T {
 // MarshalJSON writes the record Kogen keeps for a pass.
 func (p Pass) MarshalJSON() ([]byte, error) {
 	j := passJSON{N: p.N, Clean: p.Clean, Green: p.Green, Tree: p.Tree, Checks: nonNil(p.Checks),
-		Speculative: p.Speculative, Cancelled: p.Cancelled, Moved: nonNil(p.Moved), Failing: nonNil(p.Failing), MaintainedModels: p.MaintainedModels}
+		Speculative: p.Speculative, Cancelled: p.Cancelled, Moved: nonNil(p.Moved), Failing: nonNil(p.Failing), MaintainedModels: p.MaintainedModels, MaintainedFeatures: p.MaintainedFeatures}
 	if !p.Legacy {
 		j.Setup, j.NotRun = nonNil(p.Setup), nonNil(p.NotRun)
 	}
@@ -113,26 +151,27 @@ func (p *Pass) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	var j struct {
-		N                int                     `json:"n"`
-		Clean            bool                    `json:"clean"`
-		Green            bool                    `json:"green"`
-		Tree             string                  `json:"tree"`
-		Setup            []CommandResult         `json:"setup"`
-		Acceptance       json.RawMessage         `json:"acceptance"`
-		Model            json.RawMessage         `json:"model"`
-		MaintainedModels []MaintainedModelResult `json:"maintained_models"`
-		Checks           []CommandResult         `json:"checks"`
-		Speculative      []CommandResult         `json:"speculative"`
-		Cancelled        []CommandResult         `json:"cancelled"`
-		NotRun           []string                `json:"not_run"`
-		Moved            []string                `json:"moved"`
-		Failing          []string                `json:"failing"`
+		N                  int                       `json:"n"`
+		Clean              bool                      `json:"clean"`
+		Green              bool                      `json:"green"`
+		Tree               string                    `json:"tree"`
+		Setup              []CommandResult           `json:"setup"`
+		Acceptance         json.RawMessage           `json:"acceptance"`
+		Model              json.RawMessage           `json:"model"`
+		MaintainedModels   []MaintainedModelResult   `json:"maintained_models"`
+		MaintainedFeatures []MaintainedFeatureResult `json:"maintained_features"`
+		Checks             []CommandResult           `json:"checks"`
+		Speculative        []CommandResult           `json:"speculative"`
+		Cancelled          []CommandResult           `json:"cancelled"`
+		NotRun             []string                  `json:"not_run"`
+		Moved              []string                  `json:"moved"`
+		Failing            []string                  `json:"failing"`
 	}
 	if err := json.Unmarshal(data, &j); err != nil {
 		return err
 	}
 	*p = Pass{N: j.N, Clean: j.Clean, Green: j.Green, Tree: j.Tree, Setup: j.Setup, Checks: j.Checks,
-		Speculative: j.Speculative, Cancelled: j.Cancelled, NotRun: j.NotRun, Moved: j.Moved, Failing: j.Failing, MaintainedModels: j.MaintainedModels}
+		Speculative: j.Speculative, Cancelled: j.Cancelled, NotRun: j.NotRun, Moved: j.Moved, Failing: j.Failing, MaintainedModels: j.MaintainedModels, MaintainedFeatures: j.MaintainedFeatures}
 	_, hasSetup := present["setup"]
 	_, hasNotRun := present["not_run"]
 	p.Legacy = !hasSetup && !hasNotRun
@@ -314,6 +353,14 @@ func (p Pass) Feedback(acceptanceRun, completion string) string {
 		if m.Result.Failed() {
 			parts = append(parts, "model "+m.Path+": failed")
 			for _, problem := range m.Result.Problems {
+				parts = append(parts, indent(problem))
+			}
+		}
+	}
+	for _, f := range p.MaintainedFeatures {
+		if f.Result != nil && len(f.Result.Problems) > 0 {
+			parts = append(parts, fmt.Sprintf("feature %s (%s): failed, exit status %d", f.Path, acceptanceRun, f.Result.Status))
+			for _, problem := range f.Result.Problems {
 				parts = append(parts, indent(problem))
 			}
 		}
