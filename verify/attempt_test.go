@@ -75,3 +75,44 @@ func TestAttemptRefusalPassesInterruptsAndNonRefusalsThrough(t *testing.T) {
 		t.Errorf("a refusal before any step = %v", got)
 	}
 }
+
+func TestAttemptUnknownTimeoutOutput(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unavailable", true: "partial"}[partial], func(t *testing.T) {
+			root := t.TempDir()
+			a := NewAttempt(root, "demo", NewRedactor([]string{"TOKEN=secret-value"}, ""))
+			st := &AttemptStep{Name: "acceptance", Kind: "acceptance", Command: "test", Status: "timed_out", TimedOut: true, OutputUnavailable: true}
+			if partial {
+				st.Output = Cap(a.Redact("partial-marker secret-value " + strings.Repeat("x", 2<<20)))
+			}
+			a.add(st, a.started, time.Now())
+			err := a.Refuse(&stepTimeout{step: st, unknown: true})
+			e, ok := sys.AsError(err)
+			if !ok || e.Class != "environment" || e.Reason != "step_timeout" {
+				t.Fatalf("refusal: %v", err)
+			}
+			text := e.Render()
+			if !strings.Contains(text, "Its output could not be read.") || strings.Contains(text, "It wrote no output") || strings.Contains(text, "secret-value") {
+				t.Fatalf("refusal: %s", text)
+			}
+			if partial && (!strings.Contains(text, "Its output before it was stopped") || !strings.Contains(text, "partial-marker") || !strings.Contains(text, Redacted)) {
+				t.Fatalf("missing partial output: %s", text)
+			}
+			path := strings.TrimSpace(text[strings.LastIndex(text, "Evidence: ")+len("Evidence: "):])
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rec attemptRecord
+			if err := json.Unmarshal(raw, &rec); err != nil {
+				t.Fatal(err)
+			}
+			if len(rec.Steps) != 1 || !rec.Steps[0].OutputUnavailable || rec.Steps[0].Exit != nil || rec.Steps[0].Output != st.Output {
+				t.Fatalf("bad retained step: %+v", rec.Steps)
+			}
+			if partial && (len(st.Output) >= 2<<20 || strings.Contains(string(raw), "secret-value")) {
+				t.Fatal("output not capped or redacted")
+			}
+		})
+	}
+}

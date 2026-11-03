@@ -49,7 +49,8 @@ type AttemptStep struct {
 	LoadEnd    *hostLoad `json:"load_end"`
 	// Output is the redacted combined stdout and stderr of a step that did not pass, capped
 	// like the run log (1 MiB, the middle cut out).
-	Output string `json:"output,omitempty"`
+	Output            string `json:"output,omitempty"`
+	OutputUnavailable bool   `json:"output_unavailable,omitempty"`
 }
 
 // Attempt is the account of one approval's readiness check: the steps that actually ran,
@@ -160,6 +161,8 @@ func (a *Attempt) run(ctx context.Context, s *sys.Session, command, script, dir 
 	st.LoadEnd = sampleHostLoad()
 	if errors.Is(err, sys.ErrTimeoutObservation) {
 		st.Status, st.TimedOut = "timed_out", true
+		st.OutputUnavailable = true
+		st.Output = Cap(a.Redact(res.Output))
 		a.add(st, began, ended)
 		return sys.Result{}, &stepTimeout{step: st, unknown: true}
 	}
@@ -316,10 +319,13 @@ func (a *Attempt) Refuse(err error) error {
 	lines := append([]string(nil), refusal.Lines...)
 	if timeout != nil {
 		lines = append(lines, "Command: "+Cut(failing.Command))
+		if failing.OutputUnavailable {
+			lines = append(lines, "Its output could not be read.")
+		}
 		if out := strings.TrimSpace(failing.Output); out != "" {
 			lines = append(lines, "Its output before it was stopped (stdout and stderr, secrets masked):")
 			lines = append(lines, strings.Split(Diagnostic(out), "\n")...)
-		} else {
+		} else if !failing.OutputUnavailable {
 			lines = append(lines, "It wrote no output before it was stopped.")
 		}
 	}
