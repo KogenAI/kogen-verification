@@ -160,8 +160,13 @@ func runStepAs(ctx context.Context, s *sys.Session, tools Tools, name string, l 
 		res, err = a.run(ctx, s, command, script, dir, env)
 	} else {
 		res, err = RunWatched(s, name, command, l, func() (sys.Result, error) {
-			return s.Run(script, dir, sys.Options{Env: env, KillGroupOnExit: true})
+			return s.RunContext(ctx, script, dir, sys.Options{Env: env, KillGroupOnExit: true})
 		})
+	}
+	if ctx.Err() != nil {
+		if ie := s.Err(); ie != nil {
+			res, err = sys.Result{}, ie
+		}
 	}
 	began := time.Now()
 	stopped, sweepErr := stopMarkedProcesses(markerVar, runID, markerFile)

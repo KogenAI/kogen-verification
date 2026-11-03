@@ -158,7 +158,7 @@ func (a *Attempt) run(ctx context.Context, s *sys.Session, command, script, dir 
 	st := &AttemptStep{Name: label.name, Kind: label.kind, Command: a.Redact(command)}
 	st.LoadStart = sampleHostLoad()
 	began := time.Now()
-	res, err := s.Run(script, dir, sys.Options{Env: env, KillGroupOnExit: true, Timeout: a.timeout, Context: ctx})
+	res, err := s.RunContext(ctx, script, dir, sys.Options{Env: env, KillGroupOnExit: true, Timeout: a.timeout, Context: ctx})
 	ended := time.Now()
 	st.LoadEnd = sampleHostLoad()
 	if errors.Is(err, sys.ErrTimeoutObservation) {
