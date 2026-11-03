@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -14,17 +15,18 @@ import (
 
 // Input is everything one verification pass needs.
 type Input struct {
-	Root     string          // the user's checkout
-	Repo     *git.Repo       // Git at Root; nil: git.New(Root, session env)
-	Config   *project.Config // the project's commands
-	Intent   *project.Intent // the Intent being built; its Model is the model to check
-	Start    string          // the HEAD the Build started from
-	Excluded []string        // other uncommitted Intents' folders, left out of the candidate
-	N        int             // the pass number
-	RunDir   string          // the run's evidence folder: acceptance-N.ndjson goes there
-	Tools    Tools
-	Log      Logger
-	Evidence Evidence
+	Root             string              // the user's checkout
+	Repo             *git.Repo           // Git at Root; nil: git.New(Root, session env)
+	Config           *project.Config     // the project's commands
+	Intent           *project.Intent     // the Intent being built; its Model is the model to check
+	MaintainedModels []project.ModelSpec // explicitly supplied maintained specifications
+	Start            string              // the HEAD the Build started from
+	Excluded         []string            // other uncommitted Intents' folders, left out of the candidate
+	N                int                 // the pass number
+	RunDir           string              // the run's evidence folder: acceptance-N.ndjson goes there
+	Tools            Tools
+	Log              Logger
+	Evidence         Evidence
 	// Stage, when set, makes the pass a scoped stage gate: the setup commands, then only the
 	// stage's checks (named stage-<id>-<n>). Acceptance, the model and the project's checks
 	// are not part of it, so such a pass is never whole-Intent proof.
@@ -136,12 +138,20 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 		if model != nil {
 			items = append(items, item{"model", "model", ""})
 		}
+		for _, m := range in.MaintainedModels {
+			items = append(items, item{m.Path, "maintained", ""})
+		}
 		for _, c := range in.Config.Checks {
 			items = append(items, item{c.Name, "check", c.Run})
 		}
 	}
 
 	p := Pass{N: in.N, Tree: before, Clean: true, Model: ModelNotRun, NotRun: []string{}, Setup: []CommandResult{}, Checks: []CommandResult{}}
+	if in.Stage == nil {
+		for _, m := range in.MaintainedModels {
+			p.MaintainedModels = append(p.MaintainedModels, MaintainedModelResult{Path: m.Path, Result: ModelNotRun})
+		}
+	}
 	if model == nil {
 		p.Model = ModelNone
 	}
@@ -156,6 +166,7 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 			return nil, false, err
 		}
 		red := false
+		maintainedIndex := 0
 		for _, it := range items {
 			if red {
 				p.NotRun = append(p.NotRun, it.name)
@@ -169,6 +180,17 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 				}
 				p.Acceptance = &a
 				red = len(a.Problems) > 0
+			case "maintained":
+				m, err := CheckModel(ctx, s, scratch, in.Tools, &in.MaintainedModels[maintainedIndex], in.Evidence, in.Log)
+				if err != nil {
+					return nil, false, err
+				}
+				for i, problem := range m.Problems {
+					m.Problems[i] = strings.Replace(problem, "model.qnt:", it.name+":", 1)
+				}
+				p.MaintainedModels[maintainedIndex].Result = m
+				maintainedIndex++
+				red = m.Failed()
 			case "model":
 				m, err := CheckModel(ctx, s, scratch, in.Tools, model, in.Evidence, in.Log)
 				if err != nil {
@@ -218,6 +240,11 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 	}
 	if p.Model.Failed() {
 		p.Failing = append(p.Failing, "model")
+	}
+	for _, m := range p.MaintainedModels {
+		if m.Result.Failed() {
+			p.Failing = append(p.Failing, m.Path)
+		}
 	}
 	for _, c := range slices.Concat(p.Setup, p.Checks) {
 		if c.Status != 0 {

@@ -427,3 +427,76 @@ func TestACancelledContextStopsBeforeAnyCommandAndLeavesNothingBehind(t *testing
 	eqSlice(t, "ran", p.ran("ran"), nil)
 	requireNoLeftovers(t, tmp)
 }
+
+func TestMaintainedModelsFirstRedAndStage(t *testing.T) {
+	for _, mode := range []string{"acceptance", "model", "maintained", "stage"} {
+		t.Run(mode, func(t *testing.T) {
+			p := newProj(t)
+			p.write("own.qnt", "module own {}\n")
+			p.write("first.qnt", "module first { run ExampleTest = true }\n")
+			p.write("later.qnt", "module later {}\n")
+			if mode == "acceptance" {
+				p.write("app.txt", "red\n")
+			}
+			trace := p.trace("models")
+			tool := filepath.Join(p.Aux, "node")
+			script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + shellQuote(trace) + "\n"
+			if mode == "model" {
+				script += "case \"$*\" in *own.qnt*) echo own-error; exit 1;; esac\n"
+			}
+			if mode == "maintained" {
+				script += "case \"$*\" in *first.qnt*) echo maintained-error; exit 1;; esac\n"
+			}
+			if err := os.WriteFile(tool, []byte(script), 0755); err != nil {
+				t.Fatal(err)
+			}
+			in := p.input(1)
+			in.Intent.Model = &project.ModelSpec{Path: "own.qnt"}
+			in.MaintainedModels = []project.ModelSpec{{Path: "first.qnt", Invariants: []string{"X"}, Seed: "1", Samples: "2", Steps: "3"}, {Path: "later.qnt"}}
+			in.Tools.Node, in.Tools.Quint = tool, "quint"
+			p.Config.Checks = []project.Check{{Name: "after", Run: "true"}}
+			if mode == "stage" {
+				in.Stage = &Stage{ID: "one", Checks: []string{"true"}}
+			}
+			s, _ := p.session()
+			pass, err := Verify(context.Background(), s, in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "acceptance":
+				eqSlice(t, "not run", pass.NotRun, []string{"model", "first.qnt", "later.qnt", "after"})
+			case "model":
+				eqSlice(t, "not run", pass.NotRun, []string{"first.qnt", "later.qnt", "after"})
+			case "maintained":
+				eqSlice(t, "failing", pass.Failing, []string{"first.qnt"})
+				eqSlice(t, "not run", pass.NotRun, []string{"later.qnt", "after"})
+				contains(t, "feedback", pass.Feedback("", ""), "first.qnt")
+				contains(t, "feedback", pass.Feedback("", ""), "maintained-error")
+				calls, _ := os.ReadFile(trace)
+				contains(t, "detected tests", string(calls), "quint test first.qnt --backend typescript --match Test")
+				if len(pass.MaintainedModels) != 2 || pass.MaintainedModels[0].Result.State != "failed" || pass.MaintainedModels[1].Result.State != "not_run" {
+					t.Fatalf("outcomes: %+v", pass.MaintainedModels)
+				}
+				b, err := json.Marshal(pass)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var decoded Pass
+				if err := json.Unmarshal(b, &decoded); err != nil {
+					t.Fatal(err)
+				}
+				if len(decoded.MaintainedModels) != 2 || decoded.MaintainedModels[0].Path != "first.qnt" || decoded.MaintainedModels[0].Result.State != "failed" {
+					t.Fatalf("round trip: %+v", decoded.MaintainedModels)
+				}
+			case "stage":
+				if !pass.Green || pass.Acceptance != nil || len(pass.MaintainedModels) != 0 {
+					t.Fatalf("stage: %+v", pass)
+				}
+				if _, err := os.Stat(trace); !os.IsNotExist(err) {
+					t.Fatalf("model ran: %v", err)
+				}
+			}
+		})
+	}
+}

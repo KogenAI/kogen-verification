@@ -18,22 +18,29 @@ type CommandResult struct {
 	Output  string `json:"output"`
 }
 
+// MaintainedModelResult records the outcome for one supplied model.
+type MaintainedModelResult struct {
+	Path   string      `json:"path"`
+	Result ModelResult `json:"result"`
+}
+
 // Pass is one verification pass over the exact clean candidate Tree (VER-6 .. VER-9). Its
 // JSON is what Kogen records for a pass: `acceptance` is `"not_run"` or the acceptance
 // object, `model` is `"none"`, `"not_run"`, `{"ok":[]}` or `{"failed":[...]}`, and `not_run`
 // names the required items an earlier failure kept from running.
 type Pass struct {
-	N          int
-	Clean      bool
-	Green      bool
-	Tree       string
-	Setup      []CommandResult
-	Acceptance *Acceptance // nil: not run
-	Model      ModelResult
-	Checks     []CommandResult
-	NotRun     []string
-	Moved      []string
-	Failing    []string
+	N                int
+	Clean            bool
+	Green            bool
+	Tree             string
+	Setup            []CommandResult
+	Acceptance       *Acceptance // nil: not run
+	Model            ModelResult
+	MaintainedModels []MaintainedModelResult
+	Checks           []CommandResult
+	NotRun           []string
+	Moved            []string
+	Failing          []string
 
 	// Legacy marks a recorded pass from before `setup` and `not_run` existed: complete clean
 	// evidence of that kind stays reusable (VER-7).
@@ -41,17 +48,18 @@ type Pass struct {
 }
 
 type passJSON struct {
-	N          int             `json:"n"`
-	Clean      bool            `json:"clean"`
-	Green      bool            `json:"green"`
-	Tree       string          `json:"tree"`
-	Setup      any             `json:"setup,omitempty"` // absent in a legacy record
-	Acceptance any             `json:"acceptance"`
-	Model      any             `json:"model"`
-	Checks     []CommandResult `json:"checks"`
-	NotRun     any             `json:"not_run,omitempty"` // absent in a legacy record
-	Moved      []string        `json:"moved"`
-	Failing    []string        `json:"failing"`
+	N                int                     `json:"n"`
+	Clean            bool                    `json:"clean"`
+	Green            bool                    `json:"green"`
+	Tree             string                  `json:"tree"`
+	Setup            any                     `json:"setup,omitempty"` // absent in a legacy record
+	Acceptance       any                     `json:"acceptance"`
+	Model            any                     `json:"model"`
+	MaintainedModels []MaintainedModelResult `json:"maintained_models,omitempty"`
+	Checks           []CommandResult         `json:"checks"`
+	NotRun           any                     `json:"not_run,omitempty"` // absent in a legacy record
+	Moved            []string                `json:"moved"`
+	Failing          []string                `json:"failing"`
 }
 
 func nonNil[T any](s []T) []T {
@@ -64,7 +72,7 @@ func nonNil[T any](s []T) []T {
 // MarshalJSON writes the record Kogen keeps for a pass.
 func (p Pass) MarshalJSON() ([]byte, error) {
 	j := passJSON{N: p.N, Clean: p.Clean, Green: p.Green, Tree: p.Tree, Checks: nonNil(p.Checks),
-		Moved: nonNil(p.Moved), Failing: nonNil(p.Failing)}
+		Moved: nonNil(p.Moved), Failing: nonNil(p.Failing), MaintainedModels: p.MaintainedModels}
 	if !p.Legacy {
 		j.Setup, j.NotRun = nonNil(p.Setup), nonNil(p.NotRun)
 	}
@@ -101,23 +109,24 @@ func (p *Pass) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	var j struct {
-		N          int             `json:"n"`
-		Clean      bool            `json:"clean"`
-		Green      bool            `json:"green"`
-		Tree       string          `json:"tree"`
-		Setup      []CommandResult `json:"setup"`
-		Acceptance json.RawMessage `json:"acceptance"`
-		Model      json.RawMessage `json:"model"`
-		Checks     []CommandResult `json:"checks"`
-		NotRun     []string        `json:"not_run"`
-		Moved      []string        `json:"moved"`
-		Failing    []string        `json:"failing"`
+		N                int                     `json:"n"`
+		Clean            bool                    `json:"clean"`
+		Green            bool                    `json:"green"`
+		Tree             string                  `json:"tree"`
+		Setup            []CommandResult         `json:"setup"`
+		Acceptance       json.RawMessage         `json:"acceptance"`
+		Model            json.RawMessage         `json:"model"`
+		MaintainedModels []MaintainedModelResult `json:"maintained_models"`
+		Checks           []CommandResult         `json:"checks"`
+		NotRun           []string                `json:"not_run"`
+		Moved            []string                `json:"moved"`
+		Failing          []string                `json:"failing"`
 	}
 	if err := json.Unmarshal(data, &j); err != nil {
 		return err
 	}
 	*p = Pass{N: j.N, Clean: j.Clean, Green: j.Green, Tree: j.Tree, Setup: j.Setup, Checks: j.Checks,
-		NotRun: j.NotRun, Moved: j.Moved, Failing: j.Failing}
+		NotRun: j.NotRun, Moved: j.Moved, Failing: j.Failing, MaintainedModels: j.MaintainedModels}
 	_, hasSetup := present["setup"]
 	_, hasNotRun := present["not_run"]
 	p.Legacy = !hasSetup && !hasNotRun
@@ -281,6 +290,14 @@ func (p Pass) Feedback(acceptanceRun, completion string) string {
 		parts = append(parts, "model: failed")
 		for _, problem := range p.Model.Problems {
 			parts = append(parts, indent(problem))
+		}
+	}
+	for _, m := range p.MaintainedModels {
+		if m.Result.Failed() {
+			parts = append(parts, "model "+m.Path+": failed")
+			for _, problem := range m.Result.Problems {
+				parts = append(parts, indent(problem))
+			}
 		}
 	}
 	for _, c := range slices.Concat(p.Setup, p.Checks) {

@@ -15,8 +15,8 @@ import (
 // ("not_run"), passed ("ok") or failed with the problems found. Its JSON is `"none"`,
 // `"not_run"`, `{"ok":[]}` or `{"failed":[problem, ...]}`, the values Kogen's records hold.
 type ModelResult struct {
-	State    string // "none", "not_run", "ok", "failed"
-	Problems []string
+	State    string   `json:"state"` // "none", "not_run", "ok", "failed"
+	Problems []string `json:"problems"`
 }
 
 var (
