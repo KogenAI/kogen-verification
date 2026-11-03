@@ -333,7 +333,7 @@ func TestShapeProbeMinimalEnvironment(t *testing.T) {
 	requireNoLeftovers(t, tmp)
 
 	// The probe trusts its own scratch copy, followed by the caller's trusted paths when it has any.
-	const trustCommand = `echo "TRUST:$MISE_TRUSTED_CONFIG_PATHS"; echo "PWD:$(pwd)"`
+	const trustCommand = `echo "TRUST:$MISE_TRUSTED_CONFIG_PATHS"; echo "PWD:$(pwd)"; echo "RUNTMP:$TMPDIR"; echo "RUNTMP-LIST:$(ls -A "$TMPDIR" | wc -l | tr -d ' ')"; echo "HOME:$HOME"`
 	for _, tc := range []struct{ name, caller, suffix string }{
 		{"caller without the variable", "", ""},
 		{"caller with an empty variable", "MISE_TRUSTED_CONFIG_PATHS=", ""},
@@ -347,7 +347,7 @@ func TestShapeProbeMinimalEnvironment(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var trust, pwd string
+		var trust, pwd, runTmp, runTmpCount, home string
 		for _, line := range strings.Split(got.Output, "\n") {
 			if v, ok := strings.CutPrefix(line, "TRUST:"); ok {
 				trust = v
@@ -355,10 +355,22 @@ func TestShapeProbeMinimalEnvironment(t *testing.T) {
 			if v, ok := strings.CutPrefix(line, "PWD:"); ok {
 				pwd = v
 			}
+			if v, ok := strings.CutPrefix(line, "RUNTMP:"); ok {
+				runTmp = v
+			}
+			if v, ok := strings.CutPrefix(line, "RUNTMP-LIST:"); ok {
+				runTmpCount = v
+			}
+			if v, ok := strings.CutPrefix(line, "HOME:"); ok {
+				home = v
+			}
 		}
 		scratch := trust[:strings.Index(trust+":", ":")]
-		if !strings.HasPrefix(scratch, tmp+"/kogen-probe-") || trust != scratch+tc.suffix {
-			t.Errorf("%s: MISE_TRUSTED_CONFIG_PATHS = %q, want the scratch copy%s", tc.name, trust, tc.suffix)
+		if !strings.HasPrefix(scratch, tmp+"/kogen-probe-") || !strings.HasPrefix(runTmp, tmp+"/kogen-probe-tmp-") || trust != scratch+":"+runTmp+tc.suffix {
+			t.Errorf("%s: MISE_TRUSTED_CONFIG_PATHS = %q, want the scratch copy, %q%s", tc.name, trust, runTmp, tc.suffix)
+		}
+		if runTmp == scratch || strings.HasPrefix(runTmp, scratch+"/") || runTmp == home || strings.HasPrefix(runTmp, home+"/") || runTmpCount != "0" {
+			t.Errorf("%s: TMPDIR = %q (%s entries) is not a new empty directory apart from the scratch copy %q and HOME %q", tc.name, runTmp, runTmpCount, scratch, home)
 		}
 		if resolved, err := filepath.EvalSymlinks(scratch); err != nil && fileExists(scratch) || pwd != scratch && pwd != resolved {
 			t.Errorf("%s: probe ran in %q, trusted %q", tc.name, pwd, scratch)
@@ -418,6 +430,18 @@ echo "hello from the project tool"
 	if got := run("cd '" + elsewhere + "' && greet"); got.Status != 1 || !strings.Contains(got.Output, "are not trusted.") {
 		t.Fatalf("a control outside the scratch copy = %d %q", got.Status, got.Output)
 	}
+	// A control that makes a second temporary directory under TMPDIR and runs the tool in a copy
+	// of the project there passes; a copy in the caller's temporary folder stays untrusted.
+	const second = `d=$(mktemp -d "${TMPDIR:-/tmp}/second-tmp.XXXXXX") && cp .mise.toml "$d/" && cd "$d" && greet`
+	if got := run(second); got.Status != 0 || got.Output != "hello from the project tool\n" {
+		t.Fatalf("a control in a temporary directory it creates = %d %q", got.Status, got.Output)
+	}
+	if got := run(second + " --loud"); got.Status != 2 || got.Output != "greet: unknown option --loud\n" {
+		t.Fatalf("the failing control in a temporary directory it creates = %d %q", got.Status, got.Output)
+	}
+	if got := run(`d=$(mktemp -d "` + tmp + `/caller-tmp.XXXXXX") && cp .mise.toml "$d/" && cd "$d" && greet`); got.Status != 1 || !strings.Contains(got.Output, "are not trusted.") {
+		t.Fatalf("a control in the caller's temporary directory = %d %q", got.Status, got.Output)
+	}
 
 	p.setFeasibility(capability("greeting", "greet", 0, "hello from the project tool\n", ".mise.toml"))
 	got, err := Execute(context.Background(), s, Tools{}, p.Root, p.Intent, p.Root, nil)
@@ -426,6 +450,10 @@ echo "hello from the project tool"
 	}
 	if len(got) != 1 || got[0].Checks[0].Exit != 0 {
 		t.Fatalf("obligations = %s", encode(got))
+	}
+	p.setFeasibility(capability("greeting", second, 0, "hello from the project tool\n", ".mise.toml"))
+	if _, err := Execute(context.Background(), s, Tools{}, p.Root, p.Intent, p.Root, nil); err != nil {
+		t.Fatalf("the declared control in a temporary directory it creates is met: %v", renderErr(err))
 	}
 	p.setFeasibility(capability("greeting", "greet --loud", 0, "hello from the project tool\n", ".mise.toml"))
 	_, err = Execute(context.Background(), s, Tools{}, p.Root, p.Intent, p.Root, nil)
