@@ -284,6 +284,8 @@ func TestCompleteRequiresRequiredCleanEvidenceNotAStoredBoolean(t *testing.T) {
 		"no scenarios":      mut(func(p *Pass) { p.Acceptance.Scenarios = nil }),
 		"skipped":           mut(func(p *Pass) { p.Acceptance.Scenarios = []ScenarioResult{scenario("skipped")} }),
 		"not run":           mut(func(p *Pass) { p.NotRun = []string{"a-last"} }),
+		"speculative":       mut(func(p *Pass) { p.Speculative = []CommandResult{{Name: "later"}} }),
+		"cancelled":         mut(func(p *Pass) { p.Cancelled = []CommandResult{{Name: "later", Status: -1}} }),
 		"empty setup":       mut(func(p *Pass) { p.Legacy, p.Setup = false, []CommandResult{} }),
 	} {
 		if p.Complete(cfg, expected, none) {

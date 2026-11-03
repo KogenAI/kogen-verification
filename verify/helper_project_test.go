@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -48,6 +49,8 @@ func newProj(t *testing.T) *proj { return newProjIn(t, "") }
 func newProjIn(t *testing.T, name string) *proj {
 	t.Helper()
 	f := newFixtureIn(t, name)
+	// Synthetic projects start with standard Go execution, regardless of host GOFLAGS.
+	f.Env = slices.DeleteFunc(f.Env, func(kv string) bool { return strings.HasPrefix(kv, "GOFLAGS=") })
 	p := &proj{fixture: f, Aux: t.TempDir()}
 	f.write(".gitignore", ".kogen/local/\nbuild/\n")
 	f.write("app.txt", "green\n")

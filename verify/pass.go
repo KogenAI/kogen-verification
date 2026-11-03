@@ -38,6 +38,8 @@ type Pass struct {
 	Model            ModelResult
 	MaintainedModels []MaintainedModelResult
 	Checks           []CommandResult
+	Speculative      []CommandResult
+	Cancelled        []CommandResult
 	NotRun           []string
 	Moved            []string
 	Failing          []string
@@ -57,6 +59,8 @@ type passJSON struct {
 	Model            any                     `json:"model"`
 	MaintainedModels []MaintainedModelResult `json:"maintained_models,omitempty"`
 	Checks           []CommandResult         `json:"checks"`
+	Speculative      []CommandResult         `json:"speculative,omitempty"`
+	Cancelled        []CommandResult         `json:"cancelled,omitempty"`
 	NotRun           any                     `json:"not_run,omitempty"` // absent in a legacy record
 	Moved            []string                `json:"moved"`
 	Failing          []string                `json:"failing"`
@@ -72,7 +76,7 @@ func nonNil[T any](s []T) []T {
 // MarshalJSON writes the record Kogen keeps for a pass.
 func (p Pass) MarshalJSON() ([]byte, error) {
 	j := passJSON{N: p.N, Clean: p.Clean, Green: p.Green, Tree: p.Tree, Checks: nonNil(p.Checks),
-		Moved: nonNil(p.Moved), Failing: nonNil(p.Failing), MaintainedModels: p.MaintainedModels}
+		Speculative: p.Speculative, Cancelled: p.Cancelled, Moved: nonNil(p.Moved), Failing: nonNil(p.Failing), MaintainedModels: p.MaintainedModels}
 	if !p.Legacy {
 		j.Setup, j.NotRun = nonNil(p.Setup), nonNil(p.NotRun)
 	}
@@ -118,6 +122,8 @@ func (p *Pass) UnmarshalJSON(data []byte) error {
 		Model            json.RawMessage         `json:"model"`
 		MaintainedModels []MaintainedModelResult `json:"maintained_models"`
 		Checks           []CommandResult         `json:"checks"`
+		Speculative      []CommandResult         `json:"speculative"`
+		Cancelled        []CommandResult         `json:"cancelled"`
 		NotRun           []string                `json:"not_run"`
 		Moved            []string                `json:"moved"`
 		Failing          []string                `json:"failing"`
@@ -126,7 +132,7 @@ func (p *Pass) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*p = Pass{N: j.N, Clean: j.Clean, Green: j.Green, Tree: j.Tree, Setup: j.Setup, Checks: j.Checks,
-		NotRun: j.NotRun, Moved: j.Moved, Failing: j.Failing, MaintainedModels: j.MaintainedModels}
+		Speculative: j.Speculative, Cancelled: j.Cancelled, NotRun: j.NotRun, Moved: j.Moved, Failing: j.Failing, MaintainedModels: j.MaintainedModels}
 	_, hasSetup := present["setup"]
 	_, hasNotRun := present["not_run"]
 	p.Legacy = !hasSetup && !hasNotRun
@@ -174,7 +180,7 @@ func (p Pass) Valid() bool {
 // and (when the record has them) every setup command passed in declared order. Old clean
 // passes without `setup` and `not_run` stay reusable.
 func (p Pass) Complete(cfg *project.Config, expected []project.Scenario, model *project.ModelSpec) bool {
-	if !p.Clean || !p.Green || len(p.Moved) != 0 || len(p.Failing) != 0 || p.Acceptance == nil || len(p.NotRun) != 0 {
+	if !p.Clean || !p.Green || len(p.Moved) != 0 || len(p.Failing) != 0 || p.Acceptance == nil || len(p.NotRun) != 0 || len(p.Speculative) != 0 || len(p.Cancelled) != 0 {
 		return false
 	}
 	a := p.Acceptance
@@ -244,6 +250,18 @@ func (p Pass) Summary() string {
 	default:
 		what = "files changed while the checks ran: " + strings.Join(p.Moved, ", ")
 	}
+	for _, section := range []struct {
+		label   string
+		results []CommandResult
+	}{{"Speculative results", p.Speculative}, {"Cancelled work", p.Cancelled}} {
+		if len(section.results) > 0 {
+			names := make([]string, 0, len(section.results))
+			for _, r := range section.results {
+				names = append(names, r.Name)
+			}
+			what += "; " + section.label + ": " + strings.Join(names, ", ")
+		}
+	}
 	return fmt.Sprintf("kogen: pass %d: %s%s", p.N, what, NotRunSummary(p.NotRun))
 }
 
@@ -303,6 +321,17 @@ func (p Pass) Feedback(acceptanceRun, completion string) string {
 	for _, c := range slices.Concat(p.Setup, p.Checks) {
 		if c.Status != 0 {
 			parts = append(parts, fmt.Sprintf("check %s (%s): failed, exit status %d\n%s", c.Name, c.Command, c.Status, indent(Tail(c.Output, 60))))
+		}
+	}
+	for _, section := range []struct {
+		label   string
+		results []CommandResult
+	}{{"Speculative results", p.Speculative}, {"Cancelled work", p.Cancelled}} {
+		if len(section.results) > 0 {
+			parts = append(parts, section.label)
+			for _, r := range section.results {
+				parts = append(parts, fmt.Sprintf("%s (%s): status %d\n%s", r.Name, r.Command, r.Status, indent(Tail(r.Output, 60))))
+			}
 		}
 	}
 	if len(p.Moved) > 0 {

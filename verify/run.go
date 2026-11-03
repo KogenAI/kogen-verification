@@ -167,10 +167,39 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 		}
 		red := false
 		maintainedIndex := 0
-		for _, it := range items {
+		for index := 0; index < len(items); index++ {
+			it := items[index]
 			if red {
 				p.NotRun = append(p.NotRun, it.name)
 				continue
+			}
+			if in.Stage == nil && it.kind == "check" && independentGo(it.command, s) && attemptFrom(ctx) == nil {
+				end := index + 1
+				for end < len(items) && items[end].kind == "check" && independentGo(items[end].command, s) {
+					end++
+				}
+				if end-index > 1 {
+					parallelIn := in
+					parallelIn.Log = &lockedLogger{inner: in.Log}
+					results, err := runCohort(ctx, s, parallelIn, scratch, items[index:end])
+					if err != nil {
+						return nil, false, err
+					}
+					for offset, result := range results {
+						if !red {
+							p.Checks = append(p.Checks, result.result)
+							red = result.result.Status != 0
+						} else if result.neverStarted {
+							p.NotRun = append(p.NotRun, items[index+offset].name)
+						} else if result.cancelled {
+							p.Cancelled = append(p.Cancelled, result.result)
+						} else {
+							p.Speculative = append(p.Speculative, result.result)
+						}
+					}
+					index = end - 1
+					continue
+				}
 			}
 			switch it.kind {
 			case "acceptance":
