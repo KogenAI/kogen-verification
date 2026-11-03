@@ -65,21 +65,23 @@ func (m *MaintainedFeatureResult) UnmarshalJSON(data []byte) error {
 // object, `model` is `"none"`, `"not_run"`, `{"ok":[]}` or `{"failed":[...]}`, and `not_run`
 // names the required items an earlier failure kept from running.
 type Pass struct {
-	N                  int
-	Clean              bool
-	Green              bool
-	Tree               string
-	Setup              []CommandResult
-	Acceptance         *Acceptance // nil: not run
-	Model              ModelResult
-	MaintainedModels   []MaintainedModelResult
-	MaintainedFeatures []MaintainedFeatureResult
-	Checks             []CommandResult
-	Speculative        []CommandResult
-	Cancelled          []CommandResult
-	NotRun             []string
-	Moved              []string
-	Failing            []string
+	UncoveredAcceptance      []string
+	UncoveredAcceptanceCount *int
+	N                        int
+	Clean                    bool
+	Green                    bool
+	Tree                     string
+	Setup                    []CommandResult
+	Acceptance               *Acceptance // nil: not run
+	Model                    ModelResult
+	MaintainedModels         []MaintainedModelResult
+	MaintainedFeatures       []MaintainedFeatureResult
+	Checks                   []CommandResult
+	Speculative              []CommandResult
+	Cancelled                []CommandResult
+	NotRun                   []string
+	Moved                    []string
+	Failing                  []string
 
 	// Legacy marks a recorded pass from before `setup` and `not_run` existed: complete clean
 	// evidence of that kind stays reusable (VER-7).
@@ -87,21 +89,23 @@ type Pass struct {
 }
 
 type passJSON struct {
-	N                  int                       `json:"n"`
-	Clean              bool                      `json:"clean"`
-	Green              bool                      `json:"green"`
-	Tree               string                    `json:"tree"`
-	Setup              any                       `json:"setup,omitempty"` // absent in a legacy record
-	Acceptance         any                       `json:"acceptance"`
-	Model              any                       `json:"model"`
-	MaintainedModels   []MaintainedModelResult   `json:"maintained_models,omitempty"`
-	MaintainedFeatures []MaintainedFeatureResult `json:"maintained_features,omitempty"`
-	Checks             []CommandResult           `json:"checks"`
-	Speculative        []CommandResult           `json:"speculative,omitempty"`
-	Cancelled          []CommandResult           `json:"cancelled,omitempty"`
-	NotRun             any                       `json:"not_run,omitempty"` // absent in a legacy record
-	Moved              []string                  `json:"moved"`
-	Failing            []string                  `json:"failing"`
+	UncoveredAcceptance      *[]string                 `json:"uncovered_acceptance,omitempty"`
+	UncoveredAcceptanceCount *int                      `json:"uncovered_acceptance_count,omitempty"`
+	N                        int                       `json:"n"`
+	Clean                    bool                      `json:"clean"`
+	Green                    bool                      `json:"green"`
+	Tree                     string                    `json:"tree"`
+	Setup                    any                       `json:"setup,omitempty"` // absent in a legacy record
+	Acceptance               any                       `json:"acceptance"`
+	Model                    any                       `json:"model"`
+	MaintainedModels         []MaintainedModelResult   `json:"maintained_models,omitempty"`
+	MaintainedFeatures       []MaintainedFeatureResult `json:"maintained_features,omitempty"`
+	Checks                   []CommandResult           `json:"checks"`
+	Speculative              []CommandResult           `json:"speculative,omitempty"`
+	Cancelled                []CommandResult           `json:"cancelled,omitempty"`
+	NotRun                   any                       `json:"not_run,omitempty"` // absent in a legacy record
+	Moved                    []string                  `json:"moved"`
+	Failing                  []string                  `json:"failing"`
 }
 
 func nonNil[T any](s []T) []T {
@@ -115,6 +119,10 @@ func nonNil[T any](s []T) []T {
 func (p Pass) MarshalJSON() ([]byte, error) {
 	j := passJSON{N: p.N, Clean: p.Clean, Green: p.Green, Tree: p.Tree, Checks: nonNil(p.Checks),
 		Speculative: p.Speculative, Cancelled: p.Cancelled, Moved: nonNil(p.Moved), Failing: nonNil(p.Failing), MaintainedModels: p.MaintainedModels, MaintainedFeatures: p.MaintainedFeatures}
+	if p.UncoveredAcceptanceCount != nil {
+		j.UncoveredAcceptance = &p.UncoveredAcceptance
+		j.UncoveredAcceptanceCount = p.UncoveredAcceptanceCount
+	}
 	if !p.Legacy {
 		j.Setup, j.NotRun = nonNil(p.Setup), nonNil(p.NotRun)
 	}
@@ -151,27 +159,30 @@ func (p *Pass) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	var j struct {
-		N                  int                       `json:"n"`
-		Clean              bool                      `json:"clean"`
-		Green              bool                      `json:"green"`
-		Tree               string                    `json:"tree"`
-		Setup              []CommandResult           `json:"setup"`
-		Acceptance         json.RawMessage           `json:"acceptance"`
-		Model              json.RawMessage           `json:"model"`
-		MaintainedModels   []MaintainedModelResult   `json:"maintained_models"`
-		MaintainedFeatures []MaintainedFeatureResult `json:"maintained_features"`
-		Checks             []CommandResult           `json:"checks"`
-		Speculative        []CommandResult           `json:"speculative"`
-		Cancelled          []CommandResult           `json:"cancelled"`
-		NotRun             []string                  `json:"not_run"`
-		Moved              []string                  `json:"moved"`
-		Failing            []string                  `json:"failing"`
+		UncoveredAcceptance      []string                  `json:"uncovered_acceptance"`
+		UncoveredAcceptanceCount *int                      `json:"uncovered_acceptance_count"`
+		N                        int                       `json:"n"`
+		Clean                    bool                      `json:"clean"`
+		Green                    bool                      `json:"green"`
+		Tree                     string                    `json:"tree"`
+		Setup                    []CommandResult           `json:"setup"`
+		Acceptance               json.RawMessage           `json:"acceptance"`
+		Model                    json.RawMessage           `json:"model"`
+		MaintainedModels         []MaintainedModelResult   `json:"maintained_models"`
+		MaintainedFeatures       []MaintainedFeatureResult `json:"maintained_features"`
+		Checks                   []CommandResult           `json:"checks"`
+		Speculative              []CommandResult           `json:"speculative"`
+		Cancelled                []CommandResult           `json:"cancelled"`
+		NotRun                   []string                  `json:"not_run"`
+		Moved                    []string                  `json:"moved"`
+		Failing                  []string                  `json:"failing"`
 	}
 	if err := json.Unmarshal(data, &j); err != nil {
 		return err
 	}
 	*p = Pass{N: j.N, Clean: j.Clean, Green: j.Green, Tree: j.Tree, Setup: j.Setup, Checks: j.Checks,
 		Speculative: j.Speculative, Cancelled: j.Cancelled, NotRun: j.NotRun, Moved: j.Moved, Failing: j.Failing, MaintainedModels: j.MaintainedModels, MaintainedFeatures: j.MaintainedFeatures}
+	p.UncoveredAcceptance, p.UncoveredAcceptanceCount = j.UncoveredAcceptance, j.UncoveredAcceptanceCount
 	_, hasSetup := present["setup"]
 	_, hasNotRun := present["not_run"]
 	p.Legacy = !hasSetup && !hasNotRun
@@ -379,6 +390,14 @@ func (p Pass) Feedback(acceptanceRun, completion string) string {
 			for _, r := range section.results {
 				parts = append(parts, fmt.Sprintf("%s (%s): status %d\n%s", r.Name, r.Command, r.Status, indent(Tail(r.Output, 60))))
 			}
+		}
+	}
+	if line := coverageLine(p.UncoveredAcceptance); line != "" {
+		parts = append(parts, line)
+	}
+	for _, failure := range p.Failing {
+		if strings.HasPrefix(failure, "uncovered acceptance: ") {
+			parts = append(parts, failure)
 		}
 	}
 	if len(p.Moved) > 0 {

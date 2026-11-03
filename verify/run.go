@@ -20,11 +20,12 @@ type Input struct {
 	Config             *project.Config     // the project's commands
 	Intent             *project.Intent     // the Intent being built; its Model is the model to check
 	MaintainedModels   []project.ModelSpec // explicitly supplied maintained models
-	MaintainedFeatures []string            // explicitly supplied repository-relative feature paths
-	Start              string              // the HEAD the Build started from
-	Excluded           []string            // other uncommitted Intents' folders, left out of the candidate
-	N                  int                 // the pass number
-	RunDir             string              // the run's evidence folder: acceptance-N.ndjson goes there
+	AcceptanceSuite    *AcceptanceSuite
+	MaintainedFeatures []string // explicitly supplied repository-relative feature paths
+	Start              string   // the HEAD the Build started from
+	Excluded           []string // other uncommitted Intents' folders, left out of the candidate
+	N                  int      // the pass number
+	RunDir             string   // the run's evidence folder: acceptance-N.ndjson goes there
 	Tools              Tools
 	Log                Logger
 	Evidence           Evidence
@@ -100,6 +101,7 @@ type item struct {
 	name    string
 	kind    string // setup, acceptance, model, check
 	command string
+	report  string
 }
 
 // Verify runs one pass over the current candidate (VER-6, VER-7, VER-9): the exact clean
@@ -128,28 +130,39 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 
 	var items []item
 	for i, cmd := range in.Config.Setup {
-		items = append(items, item{fmt.Sprintf("setup-%d", i+1), "setup", cmd})
+		items = append(items, item{fmt.Sprintf("setup-%d", i+1), "setup", cmd, ""})
 	}
 	if in.Stage != nil {
 		for i, cmd := range in.Stage.Checks {
-			items = append(items, item{fmt.Sprintf("stage-%s-%d", in.Stage.ID, i+1), "check", cmd})
+			items = append(items, item{fmt.Sprintf("stage-%s-%d", in.Stage.ID, i+1), "check", cmd, ""})
 		}
 	} else {
-		items = append(items, item{"acceptance", "acceptance", ""})
+		items = append(items, item{"acceptance", "acceptance", "", ""})
 		if model != nil {
-			items = append(items, item{"model", "model", ""})
+			items = append(items, item{"model", "model", "", ""})
 		}
 		for _, m := range in.MaintainedModels {
-			items = append(items, item{m.Path, "maintained", ""})
+			items = append(items, item{m.Path, "maintained", "", ""})
 		}
 		for _, f := range in.MaintainedFeatures {
-			items = append(items, item{f, "feature", ""})
+			items = append(items, item{f, "feature", "", ""})
 		}
 		for _, c := range in.Config.Checks {
-			items = append(items, item{c.Name, "check", c.Run})
+			items = append(items, item{c.Name, "check", c.Run, ""})
 		}
 	}
 
+	reportDir, err := os.MkdirTemp("", "kogen-check-reports-")
+	if err != nil {
+		return Pass{}, err
+	}
+	defer os.RemoveAll(reportDir)
+	for i := range items {
+		if items[i].kind == "check" {
+			items[i].report = filepath.Join(reportDir, fmt.Sprintf("%d.json", i))
+		}
+	}
+	executed := map[string]bool{}
 	p := Pass{N: in.N, Tree: before, Clean: true, Model: ModelNotRun, NotRun: []string{}, Setup: []CommandResult{}, Checks: []CommandResult{}}
 	if in.Stage == nil {
 		for _, m := range in.MaintainedModels {
@@ -171,6 +184,14 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 		}
 		if err := os.MkdirAll(filepath.Join(scratch, ".kogen/local"), 0o755); err != nil {
 			return nil, false, err
+		}
+		if in.AcceptanceSuite != nil {
+			files, err := suiteFiles(scratch, in.AcceptanceSuite.Location)
+			if err != nil {
+				return nil, false, err
+			}
+			p.UncoveredAcceptance = files
+			p.UncoveredAcceptanceCount = new(int)
 		}
 		red := false
 		maintainedIndex := 0
@@ -194,6 +215,9 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 						return nil, false, err
 					}
 					for offset, result := range results {
+						if in.AcceptanceSuite != nil && !result.neverStarted {
+							checkCoverage(scratch, items[index+offset].report, executed)
+						}
 						if !red {
 							p.Checks = append(p.Checks, result.result)
 							red = result.result.Status != 0
@@ -215,13 +239,20 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 				if err != nil {
 					return nil, false, err
 				}
+				if in.AcceptanceSuite != nil {
+					acceptanceCoverage(scratch, report, executed)
+				}
 				p.Acceptance = &a
 				red = len(a.Problems) > 0
 			case "feature":
 				featureReport := fmt.Sprintf("%s-feature-%d.ndjson", report, featureIndex+1)
+				os.Remove(featureReport)
 				a, err := runFeature(ctx, s, scratch, in.Tools, it.name, in.acceptanceRun(), featureReport, in.Evidence, in.Log, true)
 				if err != nil {
 					return nil, false, err
+				}
+				if in.AcceptanceSuite != nil {
+					acceptanceCoverage(scratch, featureReport, executed)
 				}
 				p.MaintainedFeatures[featureIndex].Result = &a
 				featureIndex++
@@ -249,7 +280,7 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 					s.Progress(fmt.Sprintf("kogen: running %s: %s", it.name, it.command))
 					count(in.Evidence, "setup")
 				}
-				r, err := runLogged(ctx, s, in, scratch, it.name, it.command)
+				r, err := runLogged(ctx, s, in, scratch, it.name, it.command, it.report)
 				if err != nil {
 					return nil, false, err
 				}
@@ -257,9 +288,22 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 					p.Setup = append(p.Setup, r)
 				} else {
 					p.Checks = append(p.Checks, r)
+					if in.AcceptanceSuite != nil {
+						checkCoverage(scratch, it.report, executed)
+					}
 				}
 				red = r.Status != 0
 			}
+		}
+		if in.AcceptanceSuite != nil {
+			uncovered := []string{}
+			for _, path := range p.UncoveredAcceptance {
+				if !executed[path] {
+					uncovered = append(uncovered, path)
+				}
+			}
+			p.UncoveredAcceptance = uncovered
+			*p.UncoveredAcceptanceCount = len(uncovered)
 		}
 		moved, err := mat.Mutations()
 		return moved, red, err
@@ -302,6 +346,9 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 			p.Failing = append(p.Failing, c.Name)
 		}
 	}
+	if in.AcceptanceSuite != nil && in.AcceptanceSuite.RequireFullCoverage && len(p.UncoveredAcceptance) > 0 {
+		p.Failing = append(p.Failing, "uncovered acceptance: "+strings.Join(p.UncoveredAcceptance, ", "))
+	}
 	p.Green = !red && len(p.NotRun) == 0 && len(p.Failing) == 0 && len(p.Moved) == 0
 	s.Progress(p.Summary())
 	logEvent(in.Log, map[string]any{"event": "pass", "pass": in.N, "green": p.Green, "failing": p.Failing,
@@ -319,9 +366,13 @@ func unique(paths []string) []string {
 	return out
 }
 
-func runLogged(ctx context.Context, s *sys.Session, in Input, dir, name, command string) (CommandResult, error) {
+func runLogged(ctx context.Context, s *sys.Session, in Input, dir, name, command, report string) (CommandResult, error) {
 	logEvent(in.Log, map[string]any{"event": "command", "name": name, "command": command, "cwd": dir})
-	r, err := runStep(ctx, s, in.Tools, name, in.Log, command, dir, nil)
+	var env map[string]string
+	if report != "" {
+		env = map[string]string{"KOGEN_CHECK_REPORT": report}
+	}
+	r, err := runStep(ctx, s, in.Tools, name, in.Log, command, dir, env)
 	if err != nil {
 		return CommandResult{}, err
 	}

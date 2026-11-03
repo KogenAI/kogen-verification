@@ -42,6 +42,7 @@ type cohortResult struct {
 func runCohortCheck(ctx context.Context, cancelWork <-chan struct{}, parent *sys.Session, in Input, dir string, it item) cohortResult {
 	s := sys.NewWith(append([]string(nil), parent.Env...), parent.Cwd)
 	env := in.Tools.env()
+	env["KOGEN_CHECK_REPORT"] = it.report
 	id, err := newAcceptanceRunID()
 	if err != nil {
 		return cohortResult{err: err}
