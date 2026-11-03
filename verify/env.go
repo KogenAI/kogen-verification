@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"kogen-loop/sys"
 )
@@ -110,20 +111,28 @@ func record(e Evidence, event map[string]any) {
 
 // run runs one command with the tools' environment next to the caller's and stops when ctx
 // is done. Under an Attempt (an approval check) the command is also one bounded, recorded step.
+// Once it returns, every process it started is swept (see runStepAs).
 func run(ctx context.Context, s *sys.Session, tools Tools, command, dir string, extra map[string]string) (sys.Result, error) {
 	return runStep(ctx, s, tools, "command", nil, command, dir, extra)
 }
 
 // runStep is run for a named step. Without an approval Attempt the command is also watched
 // (RunWatched): name and l are how the stop of a command that ended without a result is
-// reported.
+// reported. The step is swept after it returns, as runStepAs says, with KOGEN_STEP_RUN as its
+// marker variable.
 func runStep(ctx context.Context, s *sys.Session, tools Tools, name string, l Logger, command, dir string, extra map[string]string) (sys.Result, error) {
-	return runStepAs(ctx, s, tools, name, l, command, command, dir, extra)
+	return runStepAs(ctx, s, tools, name, l, command, dir, extra, stepMarker)
 }
 
-// runStepAs is runStep for a command that is started as script but recorded, watched and
-// reported as command.
-func runStepAs(ctx context.Context, s *sys.Session, tools Tools, name string, l Logger, command, script, dir string, extra map[string]string) (sys.Result, error) {
+// runStepAs is runStep with the environment variable that marks the step: acceptanceMarker for
+// the acceptance command, stepMarker for every other one. Before the command starts it creates a
+// fresh value for that variable and a fresh marker file, and starts the command as
+// acceptanceReaped(acceptanceScript(file, command)); it is still recorded, watched and reported
+// as command. However the command ends, and before this returns, every process of the current
+// user that carries the step's variable or holds the marker file open, with its descendants, is
+// stopped (stopMarkedProcesses), the marker file is removed, and one step_sweep event naming
+// the step is logged to l. The command's result and error are not changed by the sweep.
+func runStepAs(ctx context.Context, s *sys.Session, tools Tools, name string, l Logger, command, dir string, extra map[string]string, markerVar string) (sys.Result, error) {
 	if err := ctx.Err(); err != nil {
 		// The caller's interrupt is the error, so it exits with its signal code (LOOP-5).
 		if ie := s.Err(); ie != nil {
@@ -131,14 +140,35 @@ func runStepAs(ctx context.Context, s *sys.Session, tools Tools, name string, l 
 		}
 		return sys.Result{}, err
 	}
+	runID, err := newAcceptanceRunID()
+	if err != nil {
+		return sys.Result{}, err
+	}
+	markerFile, err := newAcceptanceMarkerFile()
+	if err != nil {
+		return sys.Result{}, err
+	}
+	defer os.Remove(markerFile)
 	env := tools.env()
 	for k, v := range extra {
 		env[k] = v
 	}
+	env[markerVar] = runID
+	script := acceptanceReaped(acceptanceScript(markerFile, command))
+	var res sys.Result
 	if a := attemptFrom(ctx); a != nil {
-		return a.run(ctx, s, command, script, dir, env)
+		res, err = a.run(ctx, s, command, script, dir, env)
+	} else {
+		res, err = RunWatched(s, name, command, l, func() (sys.Result, error) {
+			return s.Run(script, dir, sys.Options{Env: env, KillGroupOnExit: true})
+		})
 	}
-	return RunWatched(s, name, command, l, func() (sys.Result, error) {
-		return s.Run(script, dir, sys.Options{Env: env, KillGroupOnExit: true})
-	})
+	began := time.Now()
+	stopped, sweepErr := stopMarkedProcesses(markerVar, runID, markerFile)
+	event := map[string]any{"event": "step_sweep", "name": name, "stopped": stopped, "ms": int(time.Since(began).Milliseconds())}
+	if sweepErr != nil {
+		event["error"] = Cut(sweepErr.Error())
+	}
+	logEvent(l, event)
+	return res, err
 }

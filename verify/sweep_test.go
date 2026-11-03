@@ -336,3 +336,177 @@ open(sys.argv[1], "w").write("%s %o %d %d" % (path, stat.S_IMODE(st.st_mode), st
 		t.Fatalf("marker file %s still exists after the run (stat error %v)", f[0], err)
 	}
 }
+
+func stepRun(ctx context.Context, root, command string, l Logger) (sys.Result, error) {
+	s := sys.NewWith(os.Environ(), root)
+	return runStep(ctx, s, Tools{}, "setup-1", l, command, root, nil)
+}
+
+func sweepDetachCommand(python, pidFile, envMode string) string {
+	return python + " -c '" + strings.ReplaceAll(sweepDetach, "'", `'\''`) + "' " + pidFile + " " + envMode
+}
+
+// A step without an Attempt (a builder pass) and one under an Attempt stop the server they leave
+// in a new session, whether or not it kept its environment, and log one step_sweep naming them.
+func TestStepStopsDetachedServers(t *testing.T) {
+	python := sweepPython(t)
+	for _, attempt := range []bool{false, true} {
+		for _, envMode := range []string{"clear", "keep"} {
+			name := envMode + "/builder"
+			if attempt {
+				name = envMode + "/attempt"
+			}
+			t.Run(name, func(t *testing.T) {
+				root := t.TempDir()
+				pidFile := filepath.Join(root, "pids")
+				ctx := context.Background()
+				if attempt {
+					ctx = NewAttempt(root, "sweep", nil).Into(ctx)
+				}
+				log := &sweepLog{}
+				if _, err := stepRun(ctx, root, sweepDetachCommand(python, pidFile, envMode), log); err != nil {
+					t.Fatal(err)
+				}
+				for _, pid := range sweepPIDs(t, pidFile, 1) {
+					if !sweepAlive(pid) {
+						continue
+					}
+					if !sweepGoneSoon(pid) {
+						t.Errorf("server %d is still running after the step", pid)
+					}
+				}
+				if len(log.events) != 1 || log.events[0]["event"] != "step_sweep" || log.events[0]["name"] != "setup-1" {
+					t.Fatalf("log = %v, want one step_sweep naming setup-1", log.events)
+				}
+			})
+		}
+	}
+}
+
+// A step that times out under an Attempt is swept too.
+func TestStepThatTimesOutIsSwept(t *testing.T) {
+	python := sweepPython(t)
+	root := t.TempDir()
+	pidFile := filepath.Join(root, "pids")
+	a := NewAttempt(root, "sweep", nil)
+	a.timeout = 500 * time.Millisecond
+	log := &sweepLog{}
+	_, err := stepRun(a.Into(context.Background()), root, sweepDetachCommand(python, pidFile, "keep")+"; sleep 30", log)
+	if err == nil {
+		t.Fatal("the step did not time out")
+	}
+	for _, pid := range sweepPIDs(t, pidFile, 1) {
+		if !sweepGoneSoon(pid) {
+			t.Errorf("server %d is still running after the timed out step", pid)
+		}
+	}
+	if len(log.events) != 1 || log.events[0]["event"] != "step_sweep" {
+		t.Fatalf("log = %v, want one step_sweep", log.events)
+	}
+}
+
+// A process carrying another step's value, and one started while the step runs, are not touched.
+func TestStepLeavesProcessesItDidNotStartAlone(t *testing.T) {
+	root := t.TempDir()
+	other := exec.Command("sleep", "300")
+	other.Env = append(os.Environ(), stepMarker+"=0123456789abcdef0123456789abcdef")
+	other.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := other.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { other.Process.Kill(); other.Wait() }()
+	var during *exec.Cmd
+	started := make(chan struct{})
+	go func() {
+		defer close(started)
+		time.Sleep(300 * time.Millisecond)
+		during = exec.Command("sleep", "300")
+		during.Env = []string{}
+		during.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := during.Start(); err != nil {
+			t.Error(err)
+			during = nil
+		}
+	}()
+	if _, err := stepRun(context.Background(), root, "sleep 1", nil); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if during != nil {
+		defer func() { during.Process.Kill(); during.Wait() }()
+		if !sweepAlive(during.Process.Pid) {
+			t.Error("a process the step did not start was stopped")
+		}
+	}
+	if !sweepAlive(other.Process.Pid) {
+		t.Error("a process carrying another step's value was stopped")
+	}
+}
+
+// Every non-acceptance step gets a fresh KOGEN_STEP_RUN replacing an inherited one; the
+// acceptance step gets only KOGEN_ACCEPTANCE_RUN.
+func TestStepMarkerVariables(t *testing.T) {
+	root, slug := sweepRoot(t)
+	inherited := "inherited-by-an-enclosing-run"
+	s := sys.NewWith(append(os.Environ(), stepMarker+"="+inherited, acceptanceMarker+"="+inherited), root)
+	envs := map[string]string{}
+	for _, name := range []string{"one", "two"} {
+		out := filepath.Join(root, name)
+		if _, err := runStep(context.Background(), s, Tools{}, name, nil, `printf '%s|%s' "$KOGEN_STEP_RUN" "${KOGEN_ACCEPTANCE_RUN-unset}" > '`+out+`'`, root, nil); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(out)
+		envs[name] = string(b)
+	}
+	hex := regexp.MustCompile(`^[0-9a-f]{32,}\|` + inherited + `$`)
+	for name, v := range envs {
+		if !hex.MatchString(v) {
+			t.Fatalf("step %s saw %q, want a fresh KOGEN_STEP_RUN", name, v)
+		}
+	}
+	if envs["one"] == envs["two"] {
+		t.Fatalf("two steps saw the same value %q", envs["one"])
+	}
+	// The acceptance step: its own value, and no step marker (cleared here so only the step's own matters).
+	s = sys.NewWith(os.Environ(), root)
+	out := filepath.Join(root, "acceptance")
+	command := `printf '%s|%s' "${KOGEN_STEP_RUN-unset}" "$KOGEN_ACCEPTANCE_RUN" > '` + out + `'`
+	if _, err := RunAcceptance(context.Background(), s, root, Tools{}, slug, command, filepath.Join(root, "r.ndjson"), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(out)
+	if !regexp.MustCompile(`^unset\|[0-9a-f]{32,}$`).MatchString(string(b)) {
+		t.Fatalf("acceptance step saw %q, want only KOGEN_ACCEPTANCE_RUN", b)
+	}
+}
+
+// A step's recorded and logged command is the configured one, and its marker file exists only
+// for the step.
+func TestStepRecordsTheConfiguredCommandAndRemovesItsMarkerFile(t *testing.T) {
+	python := sweepPython(t)
+	root := t.TempDir()
+	out := filepath.Join(root, "marker")
+	script := `import fcntl, os, sys
+if sys.platform == "darwin":
+    path = fcntl.fcntl(9, 50, b"\0" * 1024).split(b"\0")[0].decode()
+else:
+    path = os.readlink("/proc/self/fd/9")
+open(sys.argv[1], "w").write(path)
+`
+	command := python + " -c '" + strings.ReplaceAll(script, "'", `'\''`) + "' " + out
+	a := NewAttempt(root, "sweep", nil)
+	log := &sweepLog{}
+	if _, err := stepRun(a.Into(context.Background()), root, command, log); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.steps) != 1 || a.steps[0].Command != command {
+		t.Fatalf("attempt steps = %+v, want one step running %q", a.steps, command)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(string(b)); !os.IsNotExist(err) {
+		t.Fatalf("marker file %s still exists after the step (stat error %v)", b, err)
+	}
+}

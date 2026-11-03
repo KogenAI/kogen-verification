@@ -281,10 +281,11 @@ func runLogged(ctx context.Context, s *sys.Session, in Input, dir, name, command
 // RunAcceptance runs the acceptance command in root on the Intent's feature with
 // KOGEN_ACCEPTANCE_FEATURES (the feature path relative to root), KOGEN_ACCEPTANCE_REPORT
 // (report) and KOGEN_ACCEPTANCE_RUN (a fresh random value for this run), then accounts for its
-// Cucumber Messages report (VER-3, VER-4). However the command ends, every process it started
-// that carries the run's value or holds its marker descriptor, with their descendants, is
-// stopped before this returns. On Linux a per-run subreaper also stops descendants that carry
-// neither marker.
+// Cucumber Messages report (VER-3, VER-4). Like every step it is swept by runStepAs: however
+// the command ends, every process it started that carries the run's value or holds its marker
+// descriptor, with their descendants, is stopped before the step_sweep event, which comes
+// before command_result. On Linux a per-run subreaper also stops descendants that carry neither
+// marker.
 func RunAcceptance(ctx context.Context, s *sys.Session, root string, tools Tools, slug, command, report string, ev Evidence, log Logger) (Acceptance, error) {
 	count(ev, "acceptance")
 	feature := project.FeaturePath(slug)
@@ -300,26 +301,11 @@ func RunAcceptance(ctx context.Context, s *sys.Session, root string, tools Tools
 	if err := os.MkdirAll(filepath.Dir(report), 0o755); err != nil {
 		return Acceptance{}, err
 	}
-	runID, err := newAcceptanceRunID()
-	if err != nil {
-		return Acceptance{}, err
-	}
-	markerFile, err := newAcceptanceMarkerFile()
-	if err != nil {
-		return Acceptance{}, err
-	}
 	logEvent(log, map[string]any{"event": "command", "name": "acceptance", "command": command})
-	defer func() {
-		defer os.Remove(markerFile)
-		if err := stopAcceptanceProcesses(runID, markerFile); err != nil {
-			logEvent(log, map[string]any{"event": "acceptance_sweep_unavailable", "error": err.Error()})
-		}
-	}()
-	r, err := runStepAs(withStep(ctx, "acceptance", "acceptance"), s, tools, "acceptance", log, command, acceptanceReaped(acceptanceScript(markerFile, command)), root, map[string]string{
+	r, err := runStepAs(withStep(ctx, "acceptance", "acceptance"), s, tools, "acceptance", log, command, root, map[string]string{
 		"KOGEN_ACCEPTANCE_FEATURES": feature,
 		"KOGEN_ACCEPTANCE_REPORT":   report,
-		acceptanceMarker:            runID,
-	})
+	}, acceptanceMarker)
 	if err != nil {
 		return Acceptance{}, err
 	}

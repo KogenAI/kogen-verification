@@ -15,6 +15,9 @@ import (
 // the acceptance command with a fresh random value per run and never carries it itself.
 const acceptanceMarker = "KOGEN_ACCEPTANCE_RUN"
 
+// stepMarker is the same for every other verification step: one fresh value per step.
+const stepMarker = "KOGEN_STEP_RUN"
+
 // sweepGrace is how long a SIGTERMed process may take to leave before it gets SIGKILL; it
 // matches the grace of sys.Terminate.
 const sweepGrace = 5 * time.Second
@@ -100,15 +103,15 @@ func acceptanceTargets(procs []procEntry, uid, self int, marked func(pid int) bo
 	return out
 }
 
-// stopAcceptanceProcesses stops every process the acceptance run with this value started:
-// SIGTERM to the processes carrying it or holding an open descriptor on markerFile, and their
-// descendants, SIGKILL to those still present
-// after the grace, then SIGKILL for any newly matching process until a snapshot finds none. A
-// process table that cannot be read ends the sweep without an error for the run; it is
-// returned only so the caller can log it.
-func stopAcceptanceProcesses(value, markerFile string) error {
+// stopMarkedProcesses stops every process the step with this value started: SIGTERM to the
+// processes carrying variable=value or holding an open descriptor on markerFile, and their
+// descendants, SIGKILL to those still present after the grace, then SIGKILL for any newly
+// matching process until a snapshot finds none. It returns how many distinct processes it
+// signaled without EPERM. A process table that cannot be read ends the sweep without an error
+// for the step; it is returned only so the caller can log it.
+func stopMarkedProcesses(variable, value, markerFile string) (int, error) {
 	uid, self := os.Getuid(), os.Getpid()
-	marker := acceptanceMarker + "=" + value
+	marker := variable + "=" + value
 	var dev, ino uint64
 	haveFile := false
 	if info, err := os.Stat(markerFile); err == nil {
@@ -127,14 +130,17 @@ func stopAcceptanceProcesses(value, markerFile string) error {
 	}
 	targets, err := snapshot()
 	if err != nil || len(targets) == 0 {
-		return err
+		return 0, err
 	}
 	// A process that cannot be signaled (it changed identity) is not waited for again.
 	refused := map[int]bool{}
+	signaled := map[int]bool{}
 	signal := func(pids []int, sig syscall.Signal) {
 		for _, pid := range pids {
 			if err := syscall.Kill(pid, sig); err == syscall.EPERM {
 				refused[pid] = true
+			} else if err == nil {
+				signaled[pid] = true
 			}
 		}
 	}
@@ -148,11 +154,11 @@ func stopAcceptanceProcesses(value, markerFile string) error {
 	for {
 		targets, err = snapshot()
 		if err != nil {
-			return err
+			return len(signaled), err
 		}
 		targets = slices.DeleteFunc(targets, func(pid int) bool { return refused[pid] })
 		if len(targets) == 0 {
-			return nil
+			return len(signaled), nil
 		}
 		signal(targets, syscall.SIGKILL)
 		time.Sleep(50 * time.Millisecond)
