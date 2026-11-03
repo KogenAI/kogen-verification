@@ -406,18 +406,17 @@ func (r *Readiness) checkClean(ctx context.Context, s *sys.Session, dir, slug st
 	reportDir := sys.TmpPath("kogen-dry-run")
 	defer os.RemoveAll(reportDir)
 	acceptanceCtx := ctx
+	var shapeAttempt *Attempt
 	if r.BoundShapeAcceptance && r.Attempt == nil {
-		a := NewAttempt(r.Root, slug, nil)
-		a.timeout = shapeAcceptanceDeadline
-		acceptanceCtx = a.Into(ctx)
+		shapeAttempt = NewAttempt(r.Root, slug, nil)
+		shapeAttempt.timeout = shapeAcceptanceDeadline
+		acceptanceCtx = shapeAttempt.Into(ctx)
 	}
 	acc, err := RunAcceptance(acceptanceCtx, s, dir, r.Tools, slug, r.acceptanceRun(), filepath.Join(reportDir, "report.ndjson"), r.Evidence, nil)
-	if r.BoundShapeAcceptance && r.Attempt == nil {
+	if shapeAttempt != nil {
 		var timeout *stepTimeout
 		if errors.As(err, &timeout) && !timeout.unknown {
-			e := sys.Fail("intent", "not_ready", "acceptance timed out", 1)
-			e.Lines = []string{fmt.Sprintf("acceptance timed out: command exceeds the %d-second limit", int(StepTimeout/time.Second))}
-			return nil, e
+			return nil, shapeAttempt.refuseShapeTimeout(timeout, StepTimeout)
 		}
 	}
 	if err != nil {

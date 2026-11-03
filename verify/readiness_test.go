@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -561,5 +562,134 @@ func TestPassingAttemptEvidenceSurvivesScratchButIsNotReadiness(t *testing.T) {
 	}
 	if r.Cached(s, fixtureSlug) != nil {
 		t.Fatal("diagnostic attempt was reused as readiness")
+	}
+}
+
+// A Shape acceptance timeout (no caller Attempt) keeps its refusal and explains the stop with the
+// measured wall time, the output (or none), the host load and one retained shape_attempt record;
+// every other Shape result retains nothing.
+func TestShapeAcceptanceTimeoutExplainsItselfWithEvidence(t *testing.T) {
+	first := "acceptance timed out: command exceeds the 120-second limit"
+	for _, c := range []struct{ name, command, output string }{
+		{"output", "echo partial-marker; sleep 30", "partial-marker"},
+		{"silent", "sleep 30", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := newProj(t)
+			p.Config.Acceptance.Run = c.command
+			_, restore := ContractShapeAcceptanceDeadline(time.Second)
+			defer restore()
+			r := p.readiness()
+			r.BoundShapeAcceptance = true
+			s, _ := p.session()
+			_, err := r.Check(context.Background(), s, fixtureSlug)
+			e, ok := sys.AsError(err)
+			if !ok || e.Class != "intent" || e.Reason != "not_ready" || e.Detail != "acceptance timed out" || e.Exit != 1 {
+				t.Fatalf("refusal = %#v", err)
+			}
+			n := len(e.Lines)
+			if n < 5 || e.Lines[0] != first || !strings.HasPrefix(e.Lines[1], "Acceptance ran for ") || !strings.HasSuffix(e.Lines[1], "s before it was stopped with its process group.") {
+				t.Fatalf("lines = %q", e.Lines)
+			}
+			wantOut := []string{"It wrote no output before it was stopped."}
+			if c.output != "" {
+				wantOut = []string{"Its output before it was stopped (stdout and stderr, secrets masked):", c.output}
+			}
+			if got := e.Lines[2 : 2+len(wantOut)]; !slices.Equal(got, wantOut) {
+				t.Fatalf("output lines = %q, want %q", got, wantOut)
+			}
+			if !strings.HasPrefix(e.Lines[n-2], "Host load at start: ") || !strings.HasSuffix(e.Lines[n-2], ". Load alone does not establish the cause.") {
+				t.Fatalf("load line = %q", e.Lines[n-2])
+			}
+			evidence, ok := strings.CutPrefix(e.Lines[n-1], "Evidence: ")
+			if !ok {
+				t.Fatalf("last line = %q", e.Lines[n-1])
+			}
+			paths, _ := filepath.Glob(filepath.Join(p.Root, ".kogen/local/readiness/attempts/*/attempt.json"))
+			if len(paths) != 1 || paths[0] != evidence {
+				t.Fatalf("records = %q, evidence %q", paths, evidence)
+			}
+			if fi, _ := os.Stat(evidence); fi.Mode().Perm() != 0o600 {
+				t.Fatalf("file mode = %v", fi.Mode())
+			}
+			if fi, _ := os.Stat(filepath.Dir(evidence)); fi.Mode().Perm() != 0o700 {
+				t.Fatalf("folder mode = %v", fi.Mode())
+			}
+			b, err := os.ReadFile(evidence)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rec struct {
+				Kind, Outcome, Note string
+				StepTimeoutSeconds  int `json:"step_timeout_seconds"`
+				Steps               []map[string]any
+				NotRun              []string `json:"not_run"`
+				Failure             struct {
+					Class, Reason, Detail, Step string
+					TimedOut                    bool `json:"timed_out"`
+					Lines                       []string
+				}
+			}
+			if err := json.Unmarshal(b, &rec); err != nil {
+				t.Fatal(err)
+			}
+			if rec.Kind != "shape_attempt" || rec.Outcome != "refused" || rec.StepTimeoutSeconds != 1 || len(rec.Steps) != 1 || rec.NotRun == nil || len(rec.NotRun) != 0 ||
+				!strings.Contains(rec.Note, "Shape acceptance check") {
+				t.Fatalf("record = %s", b)
+			}
+			st := rec.Steps[0]
+			if st["name"] != "acceptance" || st["kind"] != "acceptance" || st["status"] != "timed_out" || st["timed_out"] != true {
+				t.Fatalf("step = %v", st)
+			}
+			if _, ok := st["load_start"]; !ok {
+				t.Fatalf("step lacks load_start: %v", st)
+			}
+			if f := rec.Failure; f.Class != "intent" || f.Reason != "not_ready" || f.Detail != "acceptance timed out" || f.Step != "acceptance" || !f.TimedOut || !slices.Equal(f.Lines, e.Lines[:n-1]) {
+				t.Fatalf("failure = %+v", f)
+			}
+			if _, ok := p.readinessRecord(); ok {
+				t.Fatal("a Shape timeout wrote a readiness record")
+			}
+		})
+	}
+}
+
+func TestShapeAcceptanceWithoutTimeoutRetainsNothing(t *testing.T) {
+	for _, c := range []struct {
+		name, command string
+		red, refused  bool
+	}{
+		{"passes", "", false, false},
+		{"accounted red", "echo actual-case-red; exit 1", true, false},
+		{"plain failure", "echo plain-failure; exit 1", false, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := newProj(t)
+			if c.command != "" {
+				if c.red {
+					c.command = "cp '" + p.Red + "' \"$KOGEN_ACCEPTANCE_REPORT\"; " + c.command
+				}
+				p.Config.Acceptance.Run = c.command
+			}
+			_, restore := ContractShapeAcceptanceDeadline(time.Minute)
+			defer restore()
+			r := p.readiness()
+			r.BoundShapeAcceptance = true
+			s, _ := p.session()
+			_, err := r.Check(context.Background(), s, fixtureSlug)
+			if (err != nil) != c.refused {
+				t.Fatalf("err = %v", err)
+			}
+			if e, ok := sys.AsError(err); ok {
+				for _, l := range e.Lines {
+					if strings.HasPrefix(l, "Evidence") || strings.HasPrefix(l, "Host load") {
+						t.Fatalf("unexpected line %q", l)
+					}
+				}
+			}
+			if paths, _ := filepath.Glob(filepath.Join(p.Root, ".kogen/local/readiness/attempts/*/attempt.json")); len(paths) != 0 {
+				t.Fatalf("retained %q", paths)
+			}
+		})
 	}
 }

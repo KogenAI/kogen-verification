@@ -1,0 +1,50 @@
+# Explain Shape acceptance timeouts with evidence
+
+Slug: k-verify-shape-timeout-evidence
+Model: not applicable — one refusal gains diagnostic lines and one private evidence file; no new workflow, readiness state or retry is introduced
+Acceptance:
+- .kogen/intents/k-verify-shape-timeout-evidence/acceptance.feature
+- features/steps/shapetimeout_steps.js
+- features/steps/shapetimeout_observer.js
+- features/steps/testdata/shapetimeout/driver.go
+
+A Shape-time acceptance timeout (a `Readiness.Check` with `BoundShapeAcceptance` set and no caller `Attempt`, whose acceptance command exceeds the Shape acceptance bound and is observed to stop) now explains itself the way the approval-time timeout does: the measured wall time of the acceptance step, its bounded redacted output before the stop (or that it wrote none), the host load at the step's start and end (or "unavailable") with the "Load alone does not establish the cause." caveat, and the path of retained private evidence of the attempt. Today (`verify/readiness.go`, `checkClean`) that refusal is only `intent/not_ready: acceptance timed out` with the single line `acceptance timed out: command exceeds the 120-second limit`, nothing retained, although the temporary Shape `Attempt` already measured the step (duration, output, `load_start`, `load_end`).
+
+Unchanged: the refusal class `intent`, reason `not_ready`, detail `acceptance timed out`, exit 1 and that existing first line (it keeps naming the 120-second `StepTimeout`); the 120-second bound (`shapeAcceptanceDeadline` stays `StepTimeout`, contracted only by tests through `ContractShapeAcceptanceDeadline`); stopping the command with its process group; every non-timeout Shape result (passes, accounted red, ordinary refusals) with no retained file and no new line; a Shape timeout whose process group could not be observed to end (`stepTimeout.unknown`), which keeps its current path; and every check with a caller-supplied `Attempt` (approval), which keeps its own refusal and its single `approval_attempt` record. No timeout increase, no automatic retry, no setting.
+
+Refusal contract. The returned `*sys.Error` has Class `intent`, Reason `not_ready`, Detail `acceptance timed out`, Exit 1 and these Lines, in this order:
+1. `acceptance timed out: command exceeds the 120-second limit` (unchanged).
+2. `Acceptance ran for <s> before it was stopped with its process group.` where `<s>` is the step's measured duration in the existing `fmtSeconds` format, e.g. `Acceptance ran for 1.1s before it was stopped with its process group.`
+3. When the step's captured (already redacted, capped) output is not blank after trimming: `Its output before it was stopped (stdout and stderr, secrets masked):` followed by the lines of `Diagnostic(output)`; otherwise the single line `It wrote no output before it was stopped.`
+4. The existing `timeoutLoad` line of the step: `Host load at start: <start>; at end: <end>. Load alone does not establish the cause.` with each boundary `1-minute <%.2f>, 5-minute <%.2f>` or `unavailable`.
+5. `Evidence: <absolute path of attempt.json>`, or `Evidence not retained: <error>` when writing failed (the refusal is otherwise the same).
+Lines pass through the Shape attempt's redactor as approval lines do (the Shape attempt keeps its nil redactor, masking labeled secrets).
+
+Evidence contract. Written before the refusal returns, with the existing private custody of `Attempt.retain`: `<checkout>/.kogen/local/readiness/attempts/<slug>-<UTC 20060102T150405Z>-<8 hex>/attempt.json`, folders 0700, file 0600 created exclusively. Same version 1 record schema as approval attempts, but `kind` `shape_attempt`, `outcome` `refused`, `slug`, `started_at`, `step_timeout_seconds` (the Shape bound in whole seconds, 120 in production), `elapsed_ms`, `steps` exactly the one recorded acceptance step (name `acceptance`, kind `acceptance`, redacted configured command, status `timed_out`, `timed_out` true, exit, start_ms, duration_ms, started_at, ended_at, `load_start` and `load_end` present, null when unavailable, and its output), `not_run` `[]`, `failure` {class `intent`, reason `not_ready`, detail `acceptance timed out`, step `acceptance`, timed_out true, lines = refusal lines 1–4, without the Evidence line} and `note` `Private local diagnostic evidence of a Shape acceptance check; it is not readiness evidence and not approval.` It is diagnostic custody only: never readiness evidence, never approval, and no `.kogen/local/readiness/<slug>.json` is written. Approval records keep kind `approval_attempt` and their note.
+
+## Decisions
+- A Shape-time acceptance timeout reports measured wall time, bounded redacted output (or that none was produced), host load at start and end (or unavailable), the load caveat and the retained private evidence path, like the approval-time timeout. (source: request)
+- Refusal class, reason (`not_ready`, "acceptance timed out"), the 120-second bound, the stop behaviour and all non-timeout Shape results stay unchanged; no timeout increase and no automatic retry. (source: request)
+- A caller-supplied attempt (approval) keeps its behaviour and produces no second record. (source: request)
+
+## Source comparison
+- Addressed: request Problem/Need (wall time, output, load, caveat, evidence path) -> Refusal contract lines 2–5 and the Evidence contract; scenarios "A Shape acceptance timeout keeps its refusal and explains the stop" and "A silent Shape acceptance timeout says it wrote no output".
+- Addressed: synthetic acceptance 1 (class intent, reason not_ready, existing first line) -> both timeout scenarios assert class, reason, exit 1, detail and the exact first line.
+- Addressed: synthetic acceptance 2 (measured seconds, `partial-marker`, labeled load line, evidence path; file under the private local readiness attempts folder, mode 0600, records the timed-out step) -> the observer checks the exact line order, the wall time against the retained `duration_ms`, the load line computed from the retained readings, the single record path, modes 0600/0700 and the `shape_attempt` record's timed-out acceptance step.
+- Addressed: synthetic acceptance 3 (passing acceptance leaves no file and no line) -> "Acceptance that passes in time leaves no retained evidence"; accounted red (exit 1 with a failed scenario reported) is likewise unchanged in "Acceptance whose failed scenario is accounted for is unchanged".
+- Addressed: synthetic acceptance 4 (ordinary exit 1 failure unchanged) -> "Acceptance that fails normally keeps its unchanged refusal", with its exact current lines `report_missing: the acceptance command exited 1; its output:` / `plain-failure`, observed on the unchanged tree.
+- Addressed: synthetic acceptance 5 (caller attempt unchanged, no second record) -> "A caller's own approval attempt keeps its single record" (environment/step_timeout, exit 3, exactly one `approval_attempt` record).
+- Contracted bound: the request's "contracted short bound" is 1000 ms through `ContractShapeAcceptanceDeadline` in the acceptance driver; production keeps 120 s.
+- Omitted deliberately: the request's "could not be read" alternative applies to the unknown-stop path (`stepTimeout.unknown`, no captured result); that path is not the `acceptance timed out` refusal today and stays unchanged, since changing it would change a refusal class. Host load may be measured or unavailable on the acceptance host; the observer accepts either, labeled.
+
+## Tests
+- A Shape timeout keeps class/reason/detail/exit/first line and adds the wall-time, output (or no-output), load and evidence lines: new test in verify/readiness_test.go running Readiness.Check with BoundShapeAcceptance, no Attempt and ContractShapeAcceptanceDeadline, for a command printing then sleeping and a silent sleeping command (integration)
+- The Shape timeout retains one private `shape_attempt` record (0700 folder, 0600 file) whose single acceptance step is timed out, with failure lines equal to the refusal lines before the Evidence line: same test, reading the retained file (integration)
+- A Shape acceptance that passes, reports an accounted failure, or fails ordinarily (exit 1, no report) retains nothing and keeps its result and lines: new cases next to it (regression)
+- A check with a caller Attempt keeps its approval refusal and one `approval_attempt` record: existing TestAttemptBoundsEachStepAndKeepsEvidence and approval readiness tests unchanged (existing)
+- The 120-second bound, process-group stop and no retry are unchanged: existing attempt and readiness tests unchanged (existing)
+
+## Feasibility
+- Scratch copy of the unchanged tree with features/steps/testdata/shapetimeout/driver.go installed: the Shape timeout of `echo partial-marker; sleep 30` at a 1 s contracted bound refused intent/not_ready with only `acceptance timed out: command exceeds the 120-second limit` and retained nothing; the same command under a caller approval Attempt refused environment/step_timeout with `partial-marker`, `Host load at start: unavailable; at end: unavailable. Load alone does not establish the cause.` on this host, and one approval_attempt record (file 0600, folder 0700); `echo plain-failure; exit 1` refused with exactly `report_missing: the acceptance command exited 1; its output:` and `plain-failure`; accounted red was ready with exit 1. (probe: exit 0)
+- The submitted acceptance on the unchanged tree: 4 scenarios passed, the 2 timeout scenarios failed at `exactly one retained attempt record, got []`; with a throwaway scratch implementation of the contract above (not submitted) all 6 passed, gofmt and go vet were clean. (probe: exit 0)
+- evidence: {"id":"shapetimeout-observer","kind":"observer","inputs":["features/steps/shapetimeout_observer.js"],"observers":["features/steps/shapetimeout_observer.js"],"checks":[{"name":"good","command":"node features/steps/shapetimeout_observer.js good","exit":0,"output":"observer accepted\n"},{"name":"bad","command":"node features/steps/shapetimeout_observer.js bad","exit":1,"output":"observer rejected\n"}]}

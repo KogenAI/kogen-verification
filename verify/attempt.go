@@ -68,6 +68,8 @@ type Attempt struct {
 	steps      []*AttemptStep
 	plan       []string
 	blamed     string
+	// shape marks the temporary attempt of a Shape acceptance check, kept as a shape_attempt.
+	shape bool
 }
 
 // NewAttempt starts the account of one approval of slug in the checkout at root.
@@ -357,6 +359,36 @@ func (a *Attempt) Refuse(err error) error {
 	return refusal
 }
 
+// refuseShapeTimeout is the refusal of a Shape acceptance check whose command exceeded the Shape
+// bound and was observed to stop: the measured wall time, the bounded redacted output, the host
+// load and the path of the retained evidence. The evidence is written before it returns.
+func (a *Attempt) refuseShapeTimeout(timeout *stepTimeout, limit time.Duration) error {
+	refusal := sys.Fail("intent", "not_ready", "acceptance timed out", 1)
+	st := timeout.step
+	lines := []string{
+		fmt.Sprintf("acceptance timed out: command exceeds the %d-second limit", int(limit/time.Second)),
+		fmt.Sprintf("Acceptance ran for %s before it was stopped with its process group.", fmtSeconds(st.DurationMS)),
+	}
+	if out := strings.TrimSpace(st.Output); out != "" {
+		lines = append(lines, "Its output before it was stopped (stdout and stderr, secrets masked):")
+		lines = append(lines, strings.Split(Diagnostic(out), "\n")...)
+	} else {
+		lines = append(lines, "It wrote no output before it was stopped.")
+	}
+	lines = append(lines, timeoutLoad(st))
+	for i, l := range lines {
+		lines[i] = a.Redact(l)
+	}
+	a.shape = true
+	path, werr := a.retain(refusal, []*AttemptStep{st}, nil, st.Name, true, lines)
+	if werr != nil {
+		refusal.Lines = append(lines, "Evidence not retained: "+werr.Error())
+	} else {
+		refusal.Lines = append(lines, "Evidence: "+path)
+	}
+	return refusal
+}
+
 func (a *Attempt) commandSteps() []*AttemptStep {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -409,6 +441,10 @@ func (a *Attempt) retain(refusal *sys.Error, steps []*AttemptStep, notRun []stri
 		ElapsedMS:       time.Since(a.started).Milliseconds(),
 		Steps:           steps, NotRun: notRun,
 		Note: "Private local diagnostic evidence of an approval check; it is not readiness evidence and not approval.",
+	}
+	if a.shape {
+		rec.Kind = "shape_attempt"
+		rec.Note = "Private local diagnostic evidence of a Shape acceptance check; it is not readiness evidence and not approval."
 	}
 	if refusal != nil {
 		rec.Failure = &attemptFailure{Class: refusal.Class, Reason: refusal.Reason, Detail: refusal.Detail, Step: blamed, TimedOut: timedOut, Lines: lines}
