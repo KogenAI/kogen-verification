@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"kogen-loop/sys"
@@ -40,6 +42,11 @@ var modelTestResults = regexp.MustCompile(`(?m)^\s*(?:ok|\d+\))\s+(\w+)\s+(?:pas
 // declared invariant with the recorded seed and bounds. Every step runs; any failure fails
 // the model, with Quint's output kept at both ends.
 func CheckModel(ctx context.Context, s *sys.Session, dir string, tools Tools, m *project.ModelSpec, ev Evidence, log Logger) (ModelResult, error) {
+	for _, inv := range m.Invariants {
+		if strings.ContainsRune(inv, ',') || strings.IndexFunc(inv, unicode.IsSpace) >= 0 {
+			return ModelResult{State: "failed", Problems: []string{"model.qnt: invalid invariant declaration " + strconv.Quote(inv)}}, nil
+		}
+	}
 	text, err := os.ReadFile(filepath.Join(dir, m.Path))
 	if err != nil {
 		return ModelResult{}, err
@@ -53,7 +60,12 @@ func CheckModel(ctx context.Context, s *sys.Session, dir string, tools Tools, m 
 	if hasModelTests.Match(modelTrivia.ReplaceAll(text, []byte(" "))) {
 		steps = append(steps, step{args: []string{"test", m.Path, "--backend", "typescript", "--match", "Test"}, what: "test"})
 	}
+	seen := make(map[string]bool)
 	for _, inv := range m.Invariants {
+		if seen[inv] {
+			continue
+		}
+		seen[inv] = true
 		steps = append(steps, step{
 			args:      []string{"run", m.Path, "--backend", "typescript", "--invariant", inv, "--seed", m.Seed, "--max-samples", m.Samples, "--max-steps", m.Steps},
 			what:      "run",
