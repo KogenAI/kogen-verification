@@ -382,9 +382,9 @@ func (a *Attempt) refuseShapeTimeout(timeout *stepTimeout, limit time.Duration) 
 	a.shape = true
 	path, werr := a.retain(refusal, []*AttemptStep{st}, nil, st.Name, true, lines)
 	if werr != nil {
-		refusal.Lines = append(lines, "Evidence not retained: "+werr.Error())
+		refusal.Lines = append(lines, a.Redact("Evidence not retained: "+werr.Error()))
 	} else {
-		refusal.Lines = append(lines, "Evidence: "+path)
+		refusal.Lines = append(lines, a.Redact("Evidence: "+path))
 	}
 	return refusal
 }

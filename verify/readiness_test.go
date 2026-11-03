@@ -3,6 +3,7 @@ package verify
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -588,13 +589,10 @@ func TestShapeAcceptanceTimeoutExplainsItselfWithEvidence(t *testing.T) {
 				t.Fatalf("refusal = %#v", err)
 			}
 			n := len(e.Lines)
-			if n < 5 || e.Lines[0] != first || !strings.HasPrefix(e.Lines[1], "Acceptance ran for ") || !strings.HasSuffix(e.Lines[1], "s before it was stopped with its process group.") {
+			if n != 4+len(wantShapeOutputLines(c.output)) || e.Lines[0] != first || !strings.HasPrefix(e.Lines[1], "Acceptance ran for ") || !strings.HasSuffix(e.Lines[1], "s before it was stopped with its process group.") {
 				t.Fatalf("lines = %q", e.Lines)
 			}
-			wantOut := []string{"It wrote no output before it was stopped."}
-			if c.output != "" {
-				wantOut = []string{"Its output before it was stopped (stdout and stderr, secrets masked):", c.output}
-			}
+			wantOut := wantShapeOutputLines(c.output)
 			if got := e.Lines[2 : 2+len(wantOut)]; !slices.Equal(got, wantOut) {
 				t.Fatalf("output lines = %q, want %q", got, wantOut)
 			}
@@ -644,6 +642,17 @@ func TestShapeAcceptanceTimeoutExplainsItselfWithEvidence(t *testing.T) {
 			if _, ok := st["load_start"]; !ok {
 				t.Fatalf("step lacks load_start: %v", st)
 			}
+			if _, ok := st["load_end"]; !ok {
+				t.Fatalf("step lacks load_end: %v", st)
+			}
+			var typed attemptRecord
+			if err := json.Unmarshal(b, &typed); err != nil {
+				t.Fatal(err)
+			}
+			step := typed.Steps[0]
+			if e.Lines[1] != fmt.Sprintf("Acceptance ran for %s before it was stopped with its process group.", fmtSeconds(step.DurationMS)) || e.Lines[n-2] != timeoutLoad(step) {
+				t.Fatalf("lines do not match recorded duration and load: %q, %+v", e.Lines, step)
+			}
 			if f := rec.Failure; f.Class != "intent" || f.Reason != "not_ready" || f.Detail != "acceptance timed out" || f.Step != "acceptance" || !f.TimedOut || !slices.Equal(f.Lines, e.Lines[:n-1]) {
 				t.Fatalf("failure = %+v", f)
 			}
@@ -652,6 +661,13 @@ func TestShapeAcceptanceTimeoutExplainsItselfWithEvidence(t *testing.T) {
 			}
 		})
 	}
+}
+
+func wantShapeOutputLines(output string) []string {
+	if output == "" {
+		return []string{"It wrote no output before it was stopped."}
+	}
+	return []string{"Its output before it was stopped (stdout and stderr, secrets masked):", output}
 }
 
 func TestShapeAcceptanceWithoutTimeoutRetainsNothing(t *testing.T) {
@@ -676,9 +692,23 @@ func TestShapeAcceptanceWithoutTimeoutRetainsNothing(t *testing.T) {
 			r := p.readiness()
 			r.BoundShapeAcceptance = true
 			s, _ := p.session()
-			_, err := r.Check(context.Background(), s, fixtureSlug)
+			ready, err := r.Check(context.Background(), s, fixtureSlug)
 			if (err != nil) != c.refused {
 				t.Fatalf("err = %v", err)
+			}
+			if !c.refused {
+				wantExit := 0
+				if c.red {
+					wantExit = 1
+				}
+				if ready == nil || ready.AcceptanceExit != wantExit {
+					t.Fatalf("ready = %+v, want acceptance exit %d", ready, wantExit)
+				}
+			} else {
+				e, ok := sys.AsError(err)
+				if !ok || e.Class != "intent" || e.Reason != "not_ready" || e.Detail != "the Intent is not ready to build" || e.Exit != 1 || !slices.Equal(e.Lines, []string{"report_missing: the acceptance command exited 1; its output:", "plain-failure"}) {
+					t.Fatalf("refusal = %#v", err)
+				}
 			}
 			if e, ok := sys.AsError(err); ok {
 				for _, l := range e.Lines {
