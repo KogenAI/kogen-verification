@@ -17,9 +17,9 @@ Implementation scope is CopyTree/Probe.Run in verify/probe.go, plus focused impl
 
 ## Source comparison
 - Addressed: request Need's two alternatives are settled on diagnostic output; the complete contract above and acceptance scenarios require `probe copy has no git metadata` while retaining real command status/output and source isolation. Usable copied Git state is deliberately not selected.
-- Addressed: Evidence's historical verify/probe.go:148-166 at 587f67d was re-read at head: CopyTree explicitly excludes .git at lines 73-85 and Probe.Run copies at 170. Historical coordinator counts (3 of 200 retained cells, none terminal: aorctl-st2 kamal r3, dsscreen kamal g1, aorclaude6-lm entropy; climb/coordinator/LANE.md git state errors row) remain context, not an expanded reliability claim or executable dependency.
-- Addressed: Independence's X-V2 model-free reproduction gate was run locally through the existing real Probe.Run harness: a fresh initialized repository yields status 128 and `fatal: not a git repository (or any of the parent directories): .git\n` in the probe. SHELF-BATCH-20261103.md is not present in this tree; no additional unpublished experiment requirements are invented. Acceptance repeats that reproducer. Existing Rails/Bundler and second-temp/environment work is preserved; file-level delivery should queue after K-PROBE-RAILS-BUNDLER if necessary.
-- Addressed: exact requested slug and Intent paths are used. README testing commands and docs/testing-rules.md's integration/regression requirements are retained; no external protocol or library change requires documentation research.
+- Addressed: Evidence's historical verify/probe.go:148-166 at 587f67d was re-read at head: CopyTree explicitly excludes .git at lines 73-85 and Probe.Run copies at 170.
+- Addressed: Independence's X-V2 model-free reproduction gate was run locally through the existing real Probe.Run harness: a fresh initialized repository yields status 128 and `fatal: not a git repository (or any of the parent directories): .git\n` in the probe. Acceptance repeats that reproducer. Existing Rails/Bundler and second-temp/environment work is preserved.
+- Addressed: exact requested slug and Intent paths are used. README testing commands are retained; no external protocol or library change requires documentation research.
 
 ## Tests
 - Git's missing-repository diagnostic is contextualized, without dropping original output or exit status: real initialized source repository probed with git status (regression).

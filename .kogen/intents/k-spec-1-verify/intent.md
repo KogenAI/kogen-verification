@@ -8,7 +8,7 @@ Acceptance:
 - features/steps/maintained_observer.js
 - features/steps/testdata/maintained/driver.go
 
-K-SPEC-1-VERIFY is the producer-first split of K-SPEC-1 (main ruling 3 Nov), parent build-notes/delivery/k-spec-1/INTENT-REQUEST.md in Studio kogen/maintained-specification-delivery. Add only explicit maintained-model input and execution in kogen-verification. Current verify.Input accepts only the current Intent's model; later Builds must also check supplied maintained specifications.
+Add only explicit maintained-model input and execution in kogen-verification. Current verify.Input accepts only the current Intent's model; verification also checks supplied maintained specifications.
 
 Add exported Input.MaintainedModels []project.ModelSpec. Each entry carries Path, Invariants, Seed, Samples and Steps using the existing ModelSpec formats. Nil and empty lists preserve today's outputs byte for byte, including serialized Pass, progress, logs, feedback and goldens. Do not introduce empty output fields into legacy records. The Intent's own model and its existing result remain intact.
 

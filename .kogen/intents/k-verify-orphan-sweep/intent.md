@@ -7,7 +7,7 @@ Acceptance:
 - features/steps/orphan_sweep_steps.js
 - features/steps/testdata/sweepdriver/main.go
 
-Studio issue f8d0ce5a (kogen; reported by kogen-research-owner, 3 Nov 2026), K-VERIFY-ORPHAN-SWEEP, change_type fix, package `verify` (`verify/sweep.go`, called from `verify/run.go` `RunAcceptance`).
+K-VERIFY-ORPHAN-SWEEP, package `verify` (`verify/sweep.go`, called from `verify/run.go` `RunAcceptance`).
 
 Today, after the acceptance command returns, `RunAcceptance` stops the processes the run started in two ways. It matches processes carrying the per-run environment entry `KOGEN_ACCEPTANCE_RUN=<value>`, and it follows parent-pid descent from those marked processes. A background server can clear its environment, start a new session, and be reparented to pid 1 when its launcher exits. That server matches neither rule, so it keeps running after the run. On macOS, a server that is an Apple platform binary (for example `/bin/sleep`) hides its environment from other processes, so even a new-session server that kept its environment survives there. This was reproduced on this macOS runner: of the six fixture patterns below, the patterns `setsid, env kept` and `env cleared, setsid, launcher exited` survive. On Linux, only the second survives, per the report.
 
@@ -43,9 +43,8 @@ Build notes: Linux could not be probed in this session, so check that the Linux 
 - Need, "the run's exit status and output stay exactly as today": addressed. Every pattern scenario checks status 3 and output `fixture output\nfixture error\n`. Two scenarios compare RunAcceptance with `/bin/sh -c` run directly: a syntax error (`echo start; fi`, status 2) and `echo "$0"; echo out; echo err >&2; exit 4` (status 4, output `/bin/sh\nout\nerr\n`).
 - Constraint, synthetic regression tests only, no model, no AoR task: addressed (fixture commands and Go regression tests).
 - Constraint, no new CLI commands or flags, no timeout raised: addressed (Required behavior, Interface unchanged).
-- Constraint, the evidence and fixture notes at `~/Scratch.noindex/kogen-lanes-private/notes-harness/climb/verification/SHELF-leftover-orphan-sweep.md` and `LANE.md` ("Row 14 / f8d0ce5a"): not readable in this session, because the directory does not exist on this runner. The fixture patterns come from the request text, so the launcher used by the research fixture is unknown here. If it closes inherited descriptors (for example Python's default `subprocess.Popen`) and clears the environment, the Boundary applies.
+- The fixture patterns come from the request text, so the launcher used by the original fixture is unknown. If it closes inherited descriptors (for example Python's default `subprocess.Popen`) and clears the environment, the Boundary applies.
 - Constraint, blind patch (Linux subreaper through a re-exec helper), reference only: not used. A subreaper on Kogen's own process without a helper would also take in detached processes that Kogen itself starts during the run, and could not tell which run they belong to. The `during` process in every pattern scenario is the counterexample.
-- Research screens the landed head with the same fixture on eu2 and the Studio runner: outside this Intent (after delivery, by research).
 
 ## Tests
 - A server that cleared its environment, started a new session and was reparented when its launcher exited is stopped when the run ends, on Linux and macOS: new regression test in `verify/sweep_test.go`, RunAcceptance on such a fixture (launcher keeps inherited descriptors), server gone within 5 s after it returns (regression); scenario `env cleared, setsid, launcher exited` (scenario)

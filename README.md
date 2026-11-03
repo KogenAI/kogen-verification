@@ -10,7 +10,7 @@ It is a component of [Kogen](https://github.com/KogenAI/kogen), which pins an ex
 
 ## Testing
 
-Some tests run the real Cucumber and Quint. Install them once:
+Go 1.27.2 and Node.js with npm are required. Some tests run the real Cucumber and Quint. Install them once:
 
 ```sh
 npm ci --prefix testdata/tools/cucumber
@@ -23,7 +23,7 @@ Then run:
 go build ./... && go vet ./... && go test -race -count=1 ./...
 ```
 
-The module depends on private KogenAI modules: set `GOPRIVATE=github.com/KogenAI/*`.
+For inquiries, contact contact@kogen.dev.
 
 ### Goldens
 

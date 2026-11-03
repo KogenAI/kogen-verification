@@ -46,7 +46,6 @@ Shaping checked this in scratch copies outside the repository: the eight golden 
 - Request "the docs say when to use it": addressed by the README section; the documentation scenario checks it shows `go test ./... -update` and names `verify/testdata/golden`.
 - Request "Synthetic fixtures only. No new user-visible option; no raised timeouts": addressed; the scenarios edit synthetic values in a temporary copy of the repository.
 - Request goldens in other component repositories (`shape/testdata/force_ordinary_golden.json`, `build/testdata/k-revod-gate/parts-requests.json`, `build/testdata/context-external-golden.json`, `reviewretry/*.wire.json`): omitted; they are not in this repository.
-- Request evidence (2 Nov K-SHAPE-DECIDE-NON-UX and K-MODELS-FILE landings, 3 Nov kogen-shaping 13ff132 rebuild) and Delivery's later conflict resolution: background; the README names conflict resolution on the combined tree as a use of the flag.
 - Existing `verify/testdata/gen/*.exs` generators: superseded by `-update` and removed (the documentation scenario checks `verify/testdata/gen` holds no files).
 
 ## Tests
