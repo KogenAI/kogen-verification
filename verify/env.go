@@ -118,6 +118,12 @@ func run(ctx context.Context, s *sys.Session, tools Tools, command, dir string, 
 // (RunWatched): name and l are how the stop of a command that ended without a result is
 // reported.
 func runStep(ctx context.Context, s *sys.Session, tools Tools, name string, l Logger, command, dir string, extra map[string]string) (sys.Result, error) {
+	return runStepAs(ctx, s, tools, name, l, command, command, dir, extra)
+}
+
+// runStepAs is runStep for a command that is started as script but recorded, watched and
+// reported as command.
+func runStepAs(ctx context.Context, s *sys.Session, tools Tools, name string, l Logger, command, script, dir string, extra map[string]string) (sys.Result, error) {
 	if err := ctx.Err(); err != nil {
 		// The caller's interrupt is the error, so it exits with its signal code (LOOP-5).
 		if ie := s.Err(); ie != nil {
@@ -130,9 +136,9 @@ func runStep(ctx context.Context, s *sys.Session, tools Tools, name string, l Lo
 		env[k] = v
 	}
 	if a := attemptFrom(ctx); a != nil {
-		return a.run(ctx, s, command, dir, env)
+		return a.run(ctx, s, command, script, dir, env)
 	}
 	return RunWatched(s, name, command, l, func() (sys.Result, error) {
-		return s.Run(command, dir, sys.Options{Env: env, KillGroupOnExit: true})
+		return s.Run(script, dir, sys.Options{Env: env, KillGroupOnExit: true})
 	})
 }

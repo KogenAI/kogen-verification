@@ -98,3 +98,64 @@ func procMarked(pid int, entry string) bool {
 	}
 	return false
 }
+
+// procInfo calls proc_info(callnum, pid, flavor, arg, buffer, size) and returns the number of
+// bytes it wrote to buf.
+func procInfo(callnum, pid, flavor int, arg uint64, buf []byte) (int, error) {
+	var p unsafe.Pointer
+	if len(buf) > 0 {
+		p = unsafe.Pointer(&buf[0])
+	}
+	n, _, errno := syscall.Syscall6(syscall.SYS_PROC_INFO, uintptr(callnum), uintptr(pid), uintptr(flavor), uintptr(arg), uintptr(p), uintptr(len(buf)))
+	if errno != 0 {
+		return 0, errno
+	}
+	return int(n), nil
+}
+
+// procHoldsFile reports whether pid has an open vnode descriptor, with any number, on the file
+// with this device and inode. It uses proc_info, which also reads the descriptors of Apple
+// platform binaries. A descriptor table that cannot be read does not match.
+func procHoldsFile(pid int, dev, ino uint64) bool {
+	const (
+		callPidInfo   = 2   // PROC_INFO_CALL_PIDINFO
+		callPidFDInfo = 3   // PROC_INFO_CALL_PIDFDINFO
+		listFDs       = 1   // PROC_PIDLISTFDS
+		fdVnodeInfo   = 1   // PROC_PIDFDVNODEINFO
+		fdTypeVnode   = 1   // PROX_FDTYPE_VNODE
+		fdInfoSize    = 8   // struct proc_fdinfo: int32 fd, uint32 type
+		vnodeInfoSize = 176 // struct vnode_fdinfo
+	)
+	var list []byte
+	for try := 0; try < 3; try++ {
+		n, err := procInfo(callPidInfo, pid, listFDs, 0, nil)
+		if err != nil || n <= 0 {
+			return false
+		}
+		list = make([]byte, n+16*fdInfoSize)
+		n, err = procInfo(callPidInfo, pid, listFDs, 0, list)
+		if err != nil {
+			return false
+		}
+		if n < len(list) {
+			list = list[:n]
+			break
+		}
+		list = nil // it may have been cut short: ask again
+	}
+	info := make([]byte, vnodeInfoSize)
+	for ; len(list) >= fdInfoSize; list = list[fdInfoSize:] {
+		fd := int32(binary.LittleEndian.Uint32(list))
+		if binary.LittleEndian.Uint32(list[4:]) != fdTypeVnode {
+			continue
+		}
+		n, err := procInfo(callPidFDInfo, pid, fdVnodeInfo, uint64(fd), info)
+		if err != nil || n < vnodeInfoSize {
+			continue
+		}
+		if uint64(binary.LittleEndian.Uint32(info[24:])) == uint64(uint32(dev)) && binary.LittleEndian.Uint64(info[32:]) == ino {
+			return true
+		}
+	}
+	return false
+}

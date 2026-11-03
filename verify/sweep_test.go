@@ -170,3 +170,169 @@ func TestAcceptanceRunValueIsFreshPerRun(t *testing.T) {
 		t.Fatalf("the session environment changed to %q", got)
 	}
 }
+
+// sweepDetach is a launcher that keeps inherited descriptors: it starts sleep 300 in a new
+// session (with the run's environment or an empty one) and exits at once, so the sleep is
+// reparented. It writes the sleep's pid to argv[1].
+const sweepDetach = `import os, sys
+r, w = os.pipe()
+if os.fork() == 0:
+    os.setsid()
+    os.write(w, b"%d" % os.getpid())
+    os.close(w)
+    os.execve("/bin/sleep", ["sleep", "300"], {} if sys.argv[2] == "clear" else dict(os.environ))
+os.close(w)
+open(sys.argv[1], "w").write(os.read(r, 32).decode())
+`
+
+// A server that started a new session and was reparented when its launcher exited is stopped,
+// whether or not it kept its environment (an Apple platform binary hides it on macOS).
+func TestAcceptanceStopsDetachedServers(t *testing.T) {
+	python := sweepPython(t)
+	for _, envMode := range []string{"clear", "keep"} {
+		t.Run(envMode, func(t *testing.T) {
+			root, slug := sweepRoot(t)
+			pidFile := filepath.Join(root, "pids")
+			s := sys.NewWith(os.Environ(), root)
+			command := python + " -c '" + strings.ReplaceAll(sweepDetach, "'", `'\''`) + "' " + pidFile + " " + envMode
+			if _, err := RunAcceptance(context.Background(), s, root, Tools{}, slug, command, filepath.Join(root, "r.ndjson"), nil, nil); err != nil {
+				t.Fatal(err)
+			}
+			for _, pid := range sweepPIDs(t, pidFile, 1) {
+				if !sweepGoneSoon(pid) {
+					t.Errorf("server %d is still running after the acceptance run", pid)
+				}
+			}
+		})
+	}
+}
+
+// A process holding a descriptor on the marker file is selected; one holding another file is not.
+func TestProcHoldsFile(t *testing.T) {
+	dir := t.TempDir()
+	marker, other := filepath.Join(dir, "marker"), filepath.Join(dir, "other")
+	for _, f := range []string{marker, other} {
+		if err := os.WriteFile(f, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	info, err := os.Stat(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := info.Sys().(*syscall.Stat_t)
+	dev, ino := uint64(st.Dev), uint64(st.Ino)
+	start := func(file string) int {
+		c := exec.Command("/bin/sh", "-c", "exec 7<"+shellQuote(file)+"; exec sleep 300")
+		if err := c.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Process.Kill(); c.Wait() })
+		return c.Process.Pid
+	}
+	holder, bystander := start(marker), start(other)
+	deadline := time.Now().Add(5 * time.Second)
+	for !procHoldsFile(holder, dev, ino) && time.Now().Before(deadline) {
+		time.Sleep(25 * time.Millisecond)
+	}
+	if !procHoldsFile(holder, dev, ino) {
+		t.Fatal("a process holding the marker file was not recognized")
+	}
+	if procHoldsFile(bystander, dev, ino) {
+		t.Fatal("a process holding another file was recognized")
+	}
+	if procHoldsFile(os.Getpid(), dev, ino) {
+		t.Fatal("this process does not hold the marker file")
+	}
+}
+
+// A detached, environment-cleared process that Kogen itself starts while the run is running is
+// not the run's and survives.
+func TestAcceptanceLeavesDetachedProcessStartedDuringTheRun(t *testing.T) {
+	root, slug := sweepRoot(t)
+	s := sys.NewWith(os.Environ(), root)
+	var during *exec.Cmd
+	started := make(chan struct{})
+	go func() {
+		defer close(started)
+		time.Sleep(300 * time.Millisecond)
+		during = exec.Command("sleep", "300")
+		during.Env = []string{}
+		during.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := during.Start(); err != nil {
+			t.Error(err)
+			during = nil
+		}
+	}()
+	if _, err := RunAcceptance(context.Background(), s, root, Tools{}, slug, "sleep 1", filepath.Join(root, "r.ndjson"), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if during == nil {
+		return
+	}
+	defer func() { during.Process.Kill(); during.Wait() }()
+	time.Sleep(100 * time.Millisecond)
+	if !sweepAlive(during.Process.Pid) {
+		t.Fatal("a process the run did not start was stopped")
+	}
+}
+
+type sweepLog struct{ events []map[string]any }
+
+func (l *sweepLog) Log(event map[string]any) { l.events = append(l.events, event) }
+
+// The recorded and logged acceptance command is the configured one, not the text holding the marker.
+func TestAcceptanceRecordsTheConfiguredCommand(t *testing.T) {
+	root, slug := sweepRoot(t)
+	s := sys.NewWith(os.Environ(), root)
+	const command = "echo 'it''s'; exit 0"
+	a := NewAttempt(root, slug, nil)
+	log := &sweepLog{}
+	if _, err := RunAcceptance(a.Into(context.Background()), s, root, Tools{}, slug, command, filepath.Join(root, "r.ndjson"), nil, log); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.steps) != 1 || a.steps[0].Command != command {
+		t.Fatalf("attempt steps = %+v, want one step running %q", a.steps, command)
+	}
+	var logged []any
+	for _, e := range log.events {
+		if e["event"] == "command" {
+			logged = append(logged, e["command"])
+		}
+	}
+	if len(logged) != 1 || logged[0] != command {
+		t.Fatalf("logged commands = %v, want [%q]", logged, command)
+	}
+}
+
+// The marker file is a private empty file that exists only for the run.
+func TestAcceptanceMarkerFileExistsOnlyForTheRun(t *testing.T) {
+	python := sweepPython(t)
+	root, slug := sweepRoot(t)
+	out := filepath.Join(root, "marker")
+	script := `import fcntl, os, stat, sys
+if sys.platform == "darwin":
+    path = fcntl.fcntl(9, 50, b"\0" * 1024).split(b"\0")[0].decode()
+else:
+    path = os.readlink("/proc/self/fd/9")
+st = os.fstat(9)
+open(sys.argv[1], "w").write("%s %o %d %d" % (path, stat.S_IMODE(st.st_mode), stat.S_ISREG(st.st_mode), st.st_size))
+`
+	s := sys.NewWith(os.Environ(), root)
+	command := python + " -c '" + strings.ReplaceAll(script, "'", `'\''`) + "' " + out
+	if _, err := RunAcceptance(context.Background(), s, root, Tools{}, slug, command, filepath.Join(root, "r.ndjson"), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := strings.Fields(string(b))
+	if len(f) != 4 || f[1] != "600" || f[2] != "1" || f[3] != "0" {
+		t.Fatalf("descriptor 9 holds %q, want a regular empty file of mode 600", b)
+	}
+	if _, err := os.Stat(f[0]); !os.IsNotExist(err) {
+		t.Fatalf("marker file %s still exists after the run (stat error %v)", f[0], err)
+	}
+}

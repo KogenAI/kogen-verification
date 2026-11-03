@@ -7,6 +7,8 @@ import (
 	"slices"
 	"syscall"
 	"time"
+
+	"kogen-loop/sys"
 )
 
 // acceptanceMarker is the environment variable that names one acceptance run. Kogen adds it to
@@ -23,6 +25,27 @@ func newAcceptanceRunID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// newAcceptanceMarkerFile creates the run's empty marker file, mode 0600, in Kogen's temporary
+// area. It is not kept open here; the acceptance shell holds it on descriptor 9.
+func newAcceptanceMarkerFile() (string, error) {
+	path := sys.TmpPath("kogen-acceptance-marker")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return "", err
+	}
+	return path, nil
+}
+
+// acceptanceScript is the text run in place of command: the shell holds the marker file open
+// on descriptor 9, then becomes an /bin/sh that receives command byte for byte.
+func acceptanceScript(markerFile, command string) string {
+	return "exec 9<" + shellQuote(markerFile) + "; exec /bin/sh -c " + shellQuote(command)
 }
 
 // procEntry is one row of a process table snapshot.
@@ -78,19 +101,29 @@ func acceptanceTargets(procs []procEntry, uid, self int, marked func(pid int) bo
 }
 
 // stopAcceptanceProcesses stops every process the acceptance run with this value started:
-// SIGTERM to the processes carrying it and their descendants, SIGKILL to those still present
+// SIGTERM to the processes carrying it or holding an open descriptor on markerFile, and their
+// descendants, SIGKILL to those still present
 // after the grace, then SIGKILL for any newly matching process until a snapshot finds none. A
 // process table that cannot be read ends the sweep without an error for the run; it is
 // returned only so the caller can log it.
-func stopAcceptanceProcesses(value string) error {
+func stopAcceptanceProcesses(value, markerFile string) error {
 	uid, self := os.Getuid(), os.Getpid()
 	marker := acceptanceMarker + "=" + value
+	var dev, ino uint64
+	haveFile := false
+	if info, err := os.Stat(markerFile); err == nil {
+		if st, ok := info.Sys().(*syscall.Stat_t); ok {
+			dev, ino, haveFile = uint64(st.Dev), uint64(st.Ino), true
+		}
+	}
 	snapshot := func() ([]int, error) {
 		procs, err := listProcs()
 		if err != nil {
 			return nil, err
 		}
-		return acceptanceTargets(procs, uid, self, func(pid int) bool { return procMarked(pid, marker) }), nil
+		return acceptanceTargets(procs, uid, self, func(pid int) bool {
+			return procMarked(pid, marker) || haveFile && procHoldsFile(pid, dev, ino)
+		}), nil
 	}
 	targets, err := snapshot()
 	if err != nil || len(targets) == 0 {

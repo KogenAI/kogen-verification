@@ -10,3 +10,5 @@ func listProcs() ([]procEntry, error) {
 }
 
 func procMarked(pid int, entry string) bool { return false }
+
+func procHoldsFile(pid int, dev, ino uint64) bool { return false }

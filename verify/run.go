@@ -255,7 +255,8 @@ func runLogged(ctx context.Context, s *sys.Session, in Input, dir, name, command
 // KOGEN_ACCEPTANCE_FEATURES (the feature path relative to root), KOGEN_ACCEPTANCE_REPORT
 // (report) and KOGEN_ACCEPTANCE_RUN (a fresh random value for this run), then accounts for its
 // Cucumber Messages report (VER-3, VER-4). However the command ends, every process it started
-// that carries the run's value, with their descendants, is stopped before this returns.
+// that carries the run's value or holds its marker descriptor, with their descendants, is
+// stopped before this returns.
 func RunAcceptance(ctx context.Context, s *sys.Session, root string, tools Tools, slug, command, report string, ev Evidence, log Logger) (Acceptance, error) {
 	count(ev, "acceptance")
 	feature := project.FeaturePath(slug)
@@ -275,13 +276,18 @@ func RunAcceptance(ctx context.Context, s *sys.Session, root string, tools Tools
 	if err != nil {
 		return Acceptance{}, err
 	}
+	markerFile, err := newAcceptanceMarkerFile()
+	if err != nil {
+		return Acceptance{}, err
+	}
 	logEvent(log, map[string]any{"event": "command", "name": "acceptance", "command": command})
 	defer func() {
-		if err := stopAcceptanceProcesses(runID); err != nil {
+		defer os.Remove(markerFile)
+		if err := stopAcceptanceProcesses(runID, markerFile); err != nil {
 			logEvent(log, map[string]any{"event": "acceptance_sweep_unavailable", "error": err.Error()})
 		}
 	}()
-	r, err := runStep(withStep(ctx, "acceptance", "acceptance"), s, tools, "acceptance", log, command, root, map[string]string{
+	r, err := runStepAs(withStep(ctx, "acceptance", "acceptance"), s, tools, "acceptance", log, command, acceptanceScript(markerFile, command), root, map[string]string{
 		"KOGEN_ACCEPTANCE_FEATURES": feature,
 		"KOGEN_ACCEPTANCE_REPORT":   report,
 		acceptanceMarker:            runID,

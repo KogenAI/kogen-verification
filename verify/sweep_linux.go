@@ -68,3 +68,23 @@ func procMarked(pid int, entry string) bool {
 	}
 	return false
 }
+
+// procHoldsFile reports whether pid has an open descriptor, with any number, on the file with
+// this device and inode. A descriptor table that cannot be read does not match.
+func procHoldsFile(pid int, dev, ino uint64) bool {
+	dir := "/proc/" + strconv.Itoa(pid) + "/fd"
+	fds, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, fd := range fds {
+		info, err := os.Stat(dir + "/" + fd.Name())
+		if err != nil {
+			continue
+		}
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && uint64(st.Dev) == dev && uint64(st.Ino) == ino {
+			return true
+		}
+	}
+	return false
+}

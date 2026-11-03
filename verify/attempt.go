@@ -143,11 +143,11 @@ func (e *stepTimeout) Error() string { return "step " + e.step.Name + " timed ou
 // run runs one command as the step named by ctx, bounded by the attempt's step timeout. A
 // step that exceeds the bound is stopped with its whole process group and returned as a
 // *stepTimeout; interrupts and cancellations are returned unchanged and recorded as nothing.
-func (a *Attempt) run(ctx context.Context, s *sys.Session, command, dir string, env map[string]string) (sys.Result, error) {
+func (a *Attempt) run(ctx context.Context, s *sys.Session, command, script, dir string, env map[string]string) (sys.Result, error) {
 	label := stepFrom(ctx)
 	st := &AttemptStep{Name: label.name, Kind: label.kind, Command: a.Redact(command)}
 	began := time.Now()
-	res, err := s.Run(command, dir, sys.Options{Env: env, KillGroupOnExit: true, Timeout: a.timeout, Context: ctx})
+	res, err := s.Run(script, dir, sys.Options{Env: env, KillGroupOnExit: true, Timeout: a.timeout, Context: ctx})
 	elapsed := time.Since(began)
 	if errors.Is(err, sys.ErrTimeoutObservation) {
 		st.Status, st.TimedOut = "timed_out", true
