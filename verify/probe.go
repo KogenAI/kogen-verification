@@ -223,7 +223,7 @@ func (pr Probe) Run(ctx context.Context, s *sys.Session) (ProbeResult, error) {
 // probeEnvKeys are the only caller variables a probe inherits besides PATH and locale:
 // explicit toolchain locations and Go caches, so installed tools and caches stay reachable.
 var probeEnvKeys = []string{"PATH", "LANG", "LANGUAGE", "GOROOT", "GOPATH", "GOTOOLDIR", "GOCACHE", "GOMODCACHE",
-	"MISE_DATA_DIR", "MISE_CONFIG_DIR", "MISE_CACHE_DIR", "ASDF_DIR", "ASDF_DATA_DIR"}
+	"MISE_CONFIG_DIR", "MISE_CACHE_DIR", "ASDF_DIR", "ASDF_DATA_DIR"}
 
 // callerToolHome is the caller's directory for a Mix or Hex home: the variable's value when
 // nonempty, else <HOME>/<dflt> when HOME is nonempty, if that path is an existing directory.
@@ -278,9 +278,10 @@ func privateHexHome(s *sys.Session) (string, error) {
 
 // probeEnv is the probe's whole environment, built from the caller session by allowlist: PATH,
 // locale, toolchain locations and Go caches, the caller's Mix home when it exists, HEX_HOME as the probe's
-// private Hex directory when hexHome is set, TMPDIR as the probe's private temporary directory,
-// MISE_TRUSTED_CONFIG_PATHS naming the scratch copy and that temporary directory (then the
-// caller's value after a colon, when it has one), and HOME set to the probe's private empty home. Nothing else the caller has set (credentials, tokens, shell startup or tool option selectors)
+// private Hex directory when hexHome is set, the caller's effective mise data directory, TMPDIR as the
+// probe's private temporary directory, MISE_TRUSTED_CONFIG_PATHS naming the scratch copy and that
+// temporary directory (then the caller's value after a colon, when it has one), and HOME set to the
+// probe's private empty home. Nothing else the caller has set (credentials, tokens, shell startup or tool option selectors)
 // is passed on.
 func probeEnv(s *sys.Session, scratch, home, runTmp, hexHome string) []string {
 	var env []string
@@ -294,6 +295,17 @@ func probeEnv(s *sys.Session, scratch, home, runTmp, hexHome string) []string {
 		env = append(env, k+"="+v)
 	}
 	slices.Reverse(env)
+	data := s.Getenv("MISE_DATA_DIR")
+	if data == "" {
+		if xdg := s.Getenv("XDG_DATA_HOME"); xdg != "" {
+			data = filepath.Join(xdg, "mise")
+		} else if callerHome := s.Getenv("HOME"); callerHome != "" {
+			data = filepath.Join(callerHome, ".local", "share", "mise")
+		}
+	}
+	if data != "" {
+		env = append(env, "MISE_DATA_DIR="+data)
+	}
 	if mix := callerToolHome(s, "MIX_HOME", ".mix"); mix != "" {
 		env = append(env, "MIX_HOME="+mix)
 	}

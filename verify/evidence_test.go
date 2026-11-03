@@ -305,7 +305,7 @@ func TestShapeProbeMinimalEnvironment(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(store, "chatgpt.json"), []byte(`{"token":"synthetic-saved-login"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s := sys.NewWith(testEnv("HOME="+callerHome, "STUDIO_TOKEN=studio-secret", "OPENAI_API_KEY=openai-secret",
+	s := sys.NewWith(testEnv("HOME="+callerHome, "MISE_DATA_DIR=", "XDG_DATA_HOME=", "STUDIO_TOKEN=studio-secret", "OPENAI_API_KEY=openai-secret",
 		"UNRELATED_SECRET=unrelated-secret", "KOGEN_CREDENTIALS_DIR="+store, "NODE_OPTIONS=--require=/x", "BASH_ENV=/x", "ENV=/x",
 		"KOGEN_NODE=/caller/node", "LC_ALL=C", "LANG=C", "GOPATH=/fixture/gopath"), p.Root)
 	before := slices.Clone(s.Env)
@@ -316,12 +316,16 @@ func TestShapeProbeMinimalEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, secret := range []string{"STUDIO_TOKEN", "studio-secret", "OPENAI_API_KEY", "openai-secret", "UNRELATED_SECRET", "unrelated-secret",
-		"KOGEN_CREDENTIALS_DIR", store, "synthetic-saved-login", "chatgpt.json", "NODE_OPTIONS", "BASH_ENV", "ENV=/x", callerHome, "/caller/node"} {
+		"KOGEN_CREDENTIALS_DIR", store, "synthetic-saved-login", "chatgpt.json", "NODE_OPTIONS", "BASH_ENV", "ENV=/x", "/caller/node"} {
 		if strings.Contains(got.Output, secret) {
 			t.Errorf("probe output shows %q:\n%s", secret, got.Output)
 		}
 	}
-	for _, want := range []string{"KOGEN_NODE=/n/node\n", "LC_ALL=C\n", "LANG=C\n", "GOPATH=/fixture/gopath\n", "PATH=", "HOME-LIST:\nHOME-IS:" + tmp + "/kogen-probe-home-"} {
+	withoutMiseData := strings.ReplaceAll(got.Output, "MISE_DATA_DIR="+filepath.Join(callerHome, ".local/share/mise")+"\n", "")
+	if strings.Contains(withoutMiseData, callerHome) {
+		t.Errorf("probe output exposes caller home outside mise data: %s", got.Output)
+	}
+	for _, want := range []string{"KOGEN_NODE=/n/node\n", "LC_ALL=C\n", "LANG=C\n", "GOPATH=/fixture/gopath\n", "PATH=", "MISE_DATA_DIR=" + filepath.Join(callerHome, ".local/share/mise") + "\n", "HOME-LIST:\nHOME-IS:" + tmp + "/kogen-probe-home-"} {
 		if !strings.Contains(got.Output, want) {
 			t.Errorf("probe output lacks %q:\n%s", want, got.Output)
 		}
