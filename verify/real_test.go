@@ -117,6 +117,15 @@ func TestRealCucumberAndQuintPassGreenThenModelRedStopsTheChecks(t *testing.T) {
 	}
 	eqSlice(t, "after check", p.ran("after"), []string{"ran"})
 	eq(t, "quint runs: typecheck, test, one invariant", ev.counts["quint"], 3)
+	testEvidence := 0
+	for _, event := range log.named("command_result") {
+		if count, ok := event["executed_test_count"]; ok {
+			testEvidence++
+			eq(t, "executed test count", count, 1)
+			eqSlice(t, "executed tests", event["executed_tests"].([]string), []string{"PassTest"})
+		}
+	}
+	eq(t, "test evidence events", testEvidence, 1)
 	var quint []string
 	for _, e := range log.named("command") {
 		if e["name"] == "model" {
@@ -311,5 +320,21 @@ Then('final {word}', function (value) {});
 		eq(t, "background and all scenario steps", len(sc.UnexercisedSteps), 4)
 		eq(t, "background source", encode(sc.UnexercisedSteps[0]), encode(StepRecord{Keyword: "Given ", Text: "background runs", Line: 3}))
 		contains(t, "hook failure", *sc.Detail, "hook-red")
+	}
+}
+
+func TestRealQuintDiscoversRunWithInterveningComment(t *testing.T) {
+	tools := realTools(t)
+	dir := t.TempDir()
+	source := "module model {\n run /* comment */ BrokenTest = false\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "model.qnt"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := CheckModel(context.Background(), sessionFor(dir), dir, tools, &project.ModelSpec{Path: "model.qnt"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Failed() {
+		t.Fatalf("false test must fail: %+v", got)
 	}
 }

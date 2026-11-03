@@ -27,7 +27,13 @@ var (
 // Failed reports whether the model check found problems.
 func (m ModelResult) Failed() bool { return m.State == "failed" }
 
-var hasModelTests = regexp.MustCompile(`\brun\s+\w*Test\b`)
+var hasModelTests = regexp.MustCompile(`\brun\s+\w*Test\w*\b`)
+
+// Ignore comments and string literals while finding run declarations. Replacing them
+// with whitespace also permits comments between the run keyword and its name.
+var modelTrivia = regexp.MustCompile(`(?s)"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/`)
+
+var modelTestResults = regexp.MustCompile(`(?m)^\s*(?:ok|\d+\))\s+(\w+)\s+(?:passed|failed after)\s+\d+\s+test\(s\)`)
 
 // CheckModel runs the Intent's Quint model in dir with Kogen's own Node and Quint and the
 // TypeScript backend (VER-5): typecheck, test when the model has tests, and one run per
@@ -44,7 +50,7 @@ func CheckModel(ctx context.Context, s *sys.Session, dir string, tools Tools, m 
 		invariant string
 	}
 	steps := []step{{args: []string{"typecheck", m.Path}, what: "typecheck"}}
-	if hasModelTests.Match(text) {
+	if hasModelTests.Match(modelTrivia.ReplaceAll(text, []byte(" "))) {
 		steps = append(steps, step{args: []string{"test", m.Path, "--backend", "typescript", "--match", "Test"}, what: "test"})
 	}
 	for _, inv := range m.Invariants {
@@ -70,7 +76,20 @@ func CheckModel(ctx context.Context, s *sys.Session, dir string, tools Tools, m 
 		if err != nil {
 			return ModelResult{}, err
 		}
-		logEvent(log, map[string]any{"event": "command_result", "name": "model", "status": r.Status, "output": Cap(r.Output)})
+		event := map[string]any{"event": "command_result", "name": "model", "status": r.Status, "output": Cap(r.Output)}
+		if st.what == "test" {
+			matches := modelTestResults.FindAllStringSubmatch(r.Output, -1)
+			names := []string{}
+			for _, match := range matches {
+				names = append(names, match[1])
+			}
+			event["executed_tests"] = names
+			event["executed_test_count"] = len(names)
+			if r.Status == 0 && len(names) == 0 {
+				problems = append(problems, "model.qnt: quint test executed no tests")
+			}
+		}
+		logEvent(log, event)
 		switch {
 		case r.Status == 0:
 		case st.invariant != "" && strings.Contains(r.Output, "[violation]"):

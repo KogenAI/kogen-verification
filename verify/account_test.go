@@ -289,3 +289,38 @@ func TestAccountRetainsOnlyActuallySkippedSteps(t *testing.T) {
 		}
 	}
 }
+
+func TestAccountRejectsBrokenAssertionChains(t *testing.T) {
+	dir := t.TempDir()
+	_, expected := featureWithSteps(t, "proof", 2)
+	for _, alteration := range []string{"complete", "omit-test", "omit-pickle", "omit-source", "duplicate-result", "wrong-source"} {
+		t.Run(alteration, func(t *testing.T) {
+			events := simpleMessages(testFeature, expected, reportOpts{})
+			doc := events[0]["gherkinDocument"].(obj)["feature"].(obj)["children"].([]any)[0].(obj)["scenario"].(obj)
+			pickle := events[1]["pickle"].(obj)
+			tc := events[2]["testCase"].(obj)
+			if alteration == "omit-test" || alteration == "omit-pickle" || alteration == "omit-source" {
+				tc["testSteps"] = tc["testSteps"].([]any)[:1]
+				events = append(events[:5], events[6:]...)
+			}
+			if alteration == "omit-pickle" || alteration == "omit-source" {
+				pickle["steps"] = pickle["steps"].([]any)[:1]
+			}
+			if alteration == "omit-source" {
+				doc["steps"] = doc["steps"].([]any)[:1]
+			}
+			if alteration == "duplicate-result" {
+				events = append(events, events[4])
+			}
+			if alteration == "wrong-source" {
+				pickle["steps"].([]any)[1].(obj)["astNodeIds"] = pickle["steps"].([]any)[0].(obj)["astNodeIds"]
+			}
+			got := account(dir, expected, writeReport(t, dir, "proof.ndjson", events), 0, "")
+			want := "report_invalid"
+			if alteration == "complete" {
+				want = "passed"
+			}
+			eq(t, "status", got.Scenarios[0].Status, want)
+		})
+	}
+}

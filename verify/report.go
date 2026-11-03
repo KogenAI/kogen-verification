@@ -113,10 +113,15 @@ func Account(root, feature string, expected []project.Scenario, report string, s
 			r = withResult(e, "missing", nil)
 		case 1:
 			r = withResult(e, hits[0].status, hits[0].detail)
-			r.UnexercisedSteps = hits[0].unexercised
-			r.Unwritten = hits[0].unwritten
-			r.RunnerObserver = hits[0].runnerObserver
-			named = hits[0].named
+			if hits[0].status != "report_invalid" && !coverageMatches(e, hits[0].coverage) {
+				r = withResult(e, "report_invalid", nil)
+			}
+			if r.Status != "report_invalid" {
+				r.UnexercisedSteps = hits[0].unexercised
+				r.Unwritten = hits[0].unwritten
+				r.RunnerObserver = hits[0].runnerObserver
+				named = hits[0].named
+			}
 		default:
 			r = withResult(e, "duplicate", nil)
 		}
@@ -167,6 +172,7 @@ func detailSuffix(d *string) string {
 // reportCase is one test case of the report: its feature path, scenario line (the Examples
 // row for outlines), name and final status.
 type reportCase struct {
+	coverage    []StepRecord
 	uri         string
 	line        int
 	hasLine     bool
@@ -355,11 +361,13 @@ func accountCases(root string, msgs []jmap) []reportCase {
 			}
 			for _, ts := range tsteps {
 				id := str(get(ts, "id"))
-				if !slices.ContainsFunc(mine, func(s stepResult) bool { return s.step == id }) {
+				if countResults(mine, id) != 1 {
 					complete = false
 				}
 			}
 		}
+		coverage, valid := reportCoverage(tc, pickle, mine, lines)
+		complete = complete && valid
 		var status string
 		var detail *string
 		if complete {
@@ -368,7 +376,7 @@ func accountCases(root string, msgs []jmap) []reportCase {
 			d := "the report does not finish this scenario"
 			status, detail = "report_invalid", &d
 		}
-		c := reportCase{name: str(get(pickle, "name")), status: status, detail: detail}
+		c := reportCase{name: str(get(pickle, "name")), status: status, detail: detail, coverage: coverage}
 		c.uri = relativeTo(expandPath(str(get(pickle, "uri")), root), root)
 		nodeIDs := list(get(pickle, "astNodeIds"))
 		if len(nodeIDs) == 0 {
@@ -390,6 +398,72 @@ func accountCases(root string, msgs []jmap) []reportCase {
 		out = append(out, c)
 	}
 	return out
+}
+
+func countResults(results []stepResult, id string) int {
+	n := 0
+	for _, r := range results {
+		if r.step == id {
+			n++
+		}
+	}
+	return n
+}
+
+// Each assertion must form a one-to-one chain from source to pickle to test step.
+func reportCoverage(tc, pickle jmap, results []stepResult, lines map[string]astNode) ([]StepRecord, bool) {
+	ps := map[string]bool{}
+	seenSource := map[string]bool{}
+	var coverage []StepRecord
+	for _, p := range list(get(pickle, "steps")) {
+		id := str(get(p, "id"))
+		ids := list(get(p, "astNodeIds"))
+		if ps[id] || len(ids) == 0 {
+			return nil, false
+		}
+		source := str(ids[0])
+		node, ok := lines[source]
+		if !ok || !node.step || seenSource[source] {
+			return nil, false
+		}
+		seenSource[source] = true
+		ps[id] = true
+		coverage = append(coverage, StepRecord{Line: node.line, Keyword: node.keyword, Text: str(get(p, "text"))})
+	}
+	seen := map[string]bool{}
+	testIDs := map[string]bool{}
+	for _, ts := range list(get(tc, "testSteps")) {
+		id := str(get(ts, "id"))
+		if testIDs[id] {
+			return nil, false
+		}
+		testIDs[id] = true
+		if v := get(ts, "pickleStepId"); v != nil {
+			p := str(v)
+			if !ps[p] || seen[p] {
+				return nil, false
+			}
+			seen[p] = true
+		} else if get(ts, "hookId") == nil {
+			return nil, false
+		}
+	}
+	if len(seen) != len(ps) || len(results) != len(testIDs) {
+		return nil, false
+	}
+	return coverage, true
+}
+
+func coverageMatches(expected project.Scenario, got []StepRecord) bool {
+	if len(expected.Steps) != len(got) {
+		return false
+	}
+	for i, s := range expected.Steps {
+		if s.Line != got[i].Line || s.Keyword != got[i].Keyword || s.Text != got[i].Text {
+			return false
+		}
+	}
+	return true
 }
 
 func expandPath(p, root string) string {
