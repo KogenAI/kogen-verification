@@ -9,6 +9,11 @@ import (
 	"github.com/KogenAI/kogen-coordinator/project"
 )
 
+// passGolden is testdata/golden/passes.json: recorded pass records with the feedback and the
+// completeness verdict the code gives them. Every `pass` record is input, including the legacy
+// records from before `setup` and `not_run` existed, as are the other fields of each case.
+// `go test -update` rewrites `feedback[].feedback` and `complete[].complete`; no other byte of
+// the file is rewritten.
 type passGolden struct {
 	Feedback []struct {
 		Name          string          `json:"name"`
@@ -43,10 +48,16 @@ func TestPassFeedbackEqualsTheElixirFeedback(t *testing.T) {
 	if len(g.Feedback) < 10 {
 		t.Fatal("missing reference cases")
 	}
-	for _, c := range g.Feedback {
+	edits := goldenUpdates(t, "passes.json")
+	for i, c := range g.Feedback {
 		t.Run(c.Name, func(t *testing.T) {
 			p := readPass(t, c.Pass)
-			if got := p.Feedback(c.AcceptanceRun, c.Completion); got != c.Feedback {
+			got := p.Feedback(c.AcceptanceRun, c.Completion)
+			if edits != nil && got != c.Feedback {
+				edits.set(got, "feedback", i, "feedback")
+				c.Feedback = got
+			}
+			if got != c.Feedback {
 				t.Fatalf("feedback differs\n got: %q\nwant: %q", got, c.Feedback)
 			}
 			// What Kogen writes reads back to the same pass.
@@ -74,7 +85,8 @@ func TestPassFeedbackEqualsTheElixirFeedback(t *testing.T) {
 func TestPassCompleteEqualsTheElixirVerdictOnEveryReference(t *testing.T) {
 	var g passGolden
 	readGolden(t, "passes.json", &g)
-	for _, c := range g.Complete {
+	edits := goldenUpdates(t, "passes.json")
+	for i, c := range g.Complete {
 		t.Run(c.Name, func(t *testing.T) {
 			expected, err := project.ParseGherkin(c.Feature)
 			if err != nil {
@@ -88,7 +100,12 @@ func TestPassCompleteEqualsTheElixirVerdictOnEveryReference(t *testing.T) {
 				model = &project.ModelSpec{Path: "m.qnt", Invariants: []string{"Safe"}, Seed: "1", Samples: "1", Steps: "1"}
 			}
 			p := readPass(t, c.Pass)
-			if got := p.Complete(cfg, expected, model); got != c.Done {
+			got := p.Complete(cfg, expected, model)
+			if edits != nil && got != c.Done {
+				edits.set(got, "complete", i, "complete")
+				c.Done = got
+			}
+			if got != c.Done {
 				t.Fatalf("Complete = %v, want %v", got, c.Done)
 			}
 			// A pass written by Kogen and read back keeps its verdict, except that a record

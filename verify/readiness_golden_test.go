@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,6 +14,13 @@ import (
 	"github.com/KogenAI/kogen-coordinator/project"
 )
 
+// readinessGolden is one project of testdata/golden/readiness.json: a hash-pinned readiness record
+// recorded for a fixture project of testdata/. The inputs are `project`, `scenarios` and
+// `record_text`, a historical record from before execution observations existed that must stay
+// what it was. `go test -update` rewrites `head`, `tree`, `sha256`, `baseline`, `record` (the
+// written record without `step_warnings` and without the scenarios' `unexercised_steps`, which
+// the test supplies itself) and `package_facts_keys` (the sorted keys of the package facts file);
+// no other byte of the file is rewritten.
 type readinessGolden struct {
 	Project    string          `json:"project"`
 	Head       string          `json:"head"`
@@ -31,7 +39,7 @@ type readinessGolden struct {
 }
 
 // goldenRepo copies testdata/<name> into a new repository committed with the fixed identity
-// and date testdata/gen/readiness.exs uses, so HEAD and tree equal the Elixir ones.
+// and date the readiness golden was recorded with, so HEAD and tree equal the recorded ones.
 func goldenRepo(t *testing.T, name string) (root string, env []string) {
 	t.Helper()
 	root = t.TempDir()
@@ -72,7 +80,8 @@ func TestReadinessRecordEqualsTheElixirRecordAndReadsBack(t *testing.T) {
 	if len(golden) != 2 {
 		t.Fatalf("%d reference projects", len(golden))
 	}
-	for _, g := range golden {
+	edits := goldenUpdates(t, "readiness.json")
+	for i, g := range golden {
 		t.Run(g.Project, func(t *testing.T) {
 			root, env := goldenRepo(t, g.Project)
 			cfg, err := project.LoadConfig(root)
@@ -85,6 +94,24 @@ func TestReadinessRecordEqualsTheElixirRecordAndReadsBack(t *testing.T) {
 			in, err := r.inputs(s, fixtureSlug)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if edits != nil {
+				if in.head != g.Head {
+					edits.set(in.head, i, "head")
+					g.Head = in.head
+				}
+				if in.tree != g.Tree {
+					edits.set(in.tree, i, "tree")
+					g.Tree = in.tree
+				}
+				if in.sha != g.SHA256 {
+					edits.set(in.sha, i, "sha256")
+					g.SHA256 = in.sha
+				}
+				if !slices.Equal(in.baseline, g.Baseline) {
+					edits.set(in.baseline, i, "baseline")
+					g.Baseline = in.baseline
+				}
 			}
 			eq(t, "head", in.head, g.Head)
 			eq(t, "tree", in.tree, g.Tree)
@@ -125,6 +152,20 @@ func TestReadinessRecordEqualsTheElixirRecordAndReadsBack(t *testing.T) {
 			}
 			path := readinessPath(root, fixtureSlug)
 			got := string(must(os.ReadFile(path)))
+			if edits != nil {
+				// The recorded record has neither step_warnings nor the scenarios' unexercised_steps.
+				written := generic(json.RawMessage(got)).(map[string]any)
+				delete(written, "step_warnings")
+				if scenarios, ok := written["scenarios"].([]any); ok {
+					for _, scenario := range scenarios {
+						delete(scenario.(map[string]any), "unexercised_steps")
+					}
+				}
+				if !goldenSame(g.Record, generic(written)) {
+					edits.set(written, i, "record")
+					g.Record = json.RawMessage(encode(written))
+				}
+			}
 			// Equal by value: Elixir orders the keys of small nested maps its own way.
 			var expectedRecord map[string]any
 			json.Unmarshal(g.Record, &expectedRecord)
@@ -139,6 +180,17 @@ func TestReadinessRecordEqualsTheElixirRecordAndReadsBack(t *testing.T) {
 			facts := must(os.ReadFile(filepath.Join(root, ".kogen/local/packages/fixture.json")))
 			var keys map[string]any
 			json.Unmarshal(facts, &keys)
+			if edits != nil {
+				var names []string
+				for k := range keys {
+					names = append(names, k)
+				}
+				slices.Sort(names)
+				if !slices.Equal(names, g.PackageFactsKeys) {
+					edits.set(names, i, "package_facts_keys")
+					g.PackageFactsKeys = names
+				}
+			}
 			if len(keys) != len(g.PackageFactsKeys) {
 				t.Fatalf("package facts = %s", facts)
 			}

@@ -13,6 +13,12 @@ import (
 	"kogen-loop/sys"
 )
 
+// feasGolden is testdata/golden/feasibility.json, read by three tests. The inputs are every
+// `name`, `feasibility`, `acceptance`, `files`, `proof`, `ready` and `reference`. `go test -update`
+// rewrites `declarations[]` `ok` (the declarations) or `error` (`class`, `detail`, `exit`, `lines`,
+// `reason`), whichever Declarations now produces; `valid[].valid`; and `observations[].observations`
+// and `observations[].acknowledgment`. Each test writes its own part. No other byte of the file
+// is rewritten.
 type feasGolden struct {
 	Declarations []struct {
 		Name        string        `json:"name"`
@@ -64,9 +70,33 @@ func TestDeclarationsEqualTheElixirReadingOnEveryReference(t *testing.T) {
 	if len(g.Declarations) < 40 {
 		t.Fatal("missing reference cases")
 	}
-	for _, c := range g.Declarations {
+	edits := goldenUpdates(t, "feasibility.json")
+	for i, c := range g.Declarations {
 		t.Run(c.Name, func(t *testing.T) {
 			got, err := Declarations(evidenceIntent(c.Acceptance, c.Feasibility))
+			if edits != nil {
+				// A reading that differs from the recorded one is rewritten; anything else
+				// (equal, or an error that is not an intent/not_ready one) is asserted below.
+				recorded := []string{"ok", "error"}
+				if e, ok := sys.AsError(err); ok {
+					if c.Error == nil || e.Class != c.Error.Class || e.Reason != c.Error.Reason || e.Detail != c.Error.Detail ||
+						!slices.Equal(e.Lines, c.Error.Lines) || e.Exit != c.Error.Exit {
+						lines := e.Lines
+						if lines == nil {
+							lines = []string{}
+						}
+						edits.members(recorded, map[string]any{"error": map[string]any{
+							"class": e.Class, "detail": e.Detail, "exit": e.Exit, "lines": lines, "reason": e.Reason}}, "declarations", i)
+						return
+					}
+				} else if err == nil && (c.Error != nil || (encode(got) != encode(c.OK) && !(len(got) == 0 && len(c.OK) == 0))) {
+					if got == nil {
+						got = []Declaration{}
+					}
+					edits.members(recorded, map[string]any{"ok": got}, "declarations", i)
+					return
+				}
+			}
 			if c.Error != nil {
 				e, ok := sys.AsError(err)
 				if !ok {
@@ -93,7 +123,8 @@ func TestDeclarationsEqualTheElixirReadingOnEveryReference(t *testing.T) {
 func TestValidEqualsTheElixirVerdictOnEveryReference(t *testing.T) {
 	var g feasGolden
 	readGolden(t, "feasibility.json", &g)
-	for _, c := range g.Valid {
+	edits := goldenUpdates(t, "feasibility.json")
+	for i, c := range g.Valid {
 		t.Run(c.Name, func(t *testing.T) {
 			root := t.TempDir()
 			for path, raw := range c.Files {
@@ -118,7 +149,12 @@ func TestValidEqualsTheElixirVerdictOnEveryReference(t *testing.T) {
 			if err := d.Decode(&proof); err != nil {
 				t.Fatal(err)
 			}
-			if got := Valid(root, evidenceIntent(c.Acceptance, c.Feasibility), proof); got != c.Valid {
+			got := Valid(root, evidenceIntent(c.Acceptance, c.Feasibility), proof)
+			if edits != nil && got != c.Valid {
+				edits.set(got, "valid", i, "valid")
+				return
+			}
+			if got != c.Valid {
 				t.Fatalf("Valid = %v, want %v", got, c.Valid)
 			}
 		})
@@ -128,7 +164,8 @@ func TestValidEqualsTheElixirVerdictOnEveryReference(t *testing.T) {
 func TestObservationsAndAcknowledgmentEqualTheElixirTexts(t *testing.T) {
 	var g feasGolden
 	readGolden(t, "feasibility.json", &g)
-	for _, c := range g.Observations {
+	edits := goldenUpdates(t, "feasibility.json")
+	for i, c := range g.Observations {
 		t.Run(c.Name, func(t *testing.T) {
 			ready := &Ready{SHA256: c.Ready.SHA256, Head: c.Ready.Head, AcceptanceExit: c.Ready.AcceptanceExit}
 			for _, s := range c.Ready.Scenarios {
@@ -137,6 +174,16 @@ func TestObservationsAndAcknowledgmentEqualTheElixirTexts(t *testing.T) {
 			ref := ""
 			if c.Reference != nil {
 				ref = *c.Reference
+			}
+			if edits != nil {
+				if got := Observations("obs", ready, ref); got != c.Observations {
+					edits.set(got, "observations", i, "observations")
+					c.Observations = got
+				}
+				if got := Acknowledgment("obs", ready, ref); got != c.Acknowledgement {
+					edits.set(got, "observations", i, "acknowledgment")
+					c.Acknowledgement = got
+				}
 			}
 			if got := Observations("obs", ready, ref); got != c.Observations {
 				t.Fatalf("observations differ\n got: %q\nwant: %q", got, c.Observations)

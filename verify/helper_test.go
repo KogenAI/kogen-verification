@@ -266,7 +266,8 @@ func cucumberRun(stepsDir string) string {
 
 // ---- reference data from the Elixir implementation ----
 
-// readGolden decodes testdata/golden/<name> (written by testdata/gen/*.exs) into v.
+// readGolden decodes testdata/golden/<name> into v. The goldens are rewritten only by a run of
+// the golden tests with -update (see golden_update_test.go).
 func readGolden(t *testing.T, name string, v any) {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("testdata", "golden", name))

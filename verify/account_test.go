@@ -206,8 +206,12 @@ func TestAccountScenarioOutlineResultsUseEachExamplesRowLineAsTheKey(t *testing.
 	eqSlice(t, "problems", got.Problems, nil)
 }
 
-// ---- parity with Kogen.Checks.account (testdata/gen/accounts.exs) ----
+// ---- parity with the recorded accounting of Kogen.Checks.account ----
 
+// goldenAccount is one case of testdata/golden/accounts.json: the inputs of Account (`name`,
+// `feature`, `report`, `status`, `output`) and the recorded `result`. `go test -update` rewrites
+// each `result`, in the projection the test compares (without the scenarios' `unexercised_steps`);
+// no other byte of the file is rewritten.
 type goldenAccount struct {
 	Name    string          `json:"name"`
 	Feature string          `json:"feature"`
@@ -225,7 +229,8 @@ func TestAccountEqualsTheElixirAccountingOnEveryReference(t *testing.T) {
 	}
 	const root = "/nonexistent/kogen-root"
 	dir := t.TempDir()
-	for _, c := range cases {
+	edits := goldenUpdates(t, "accounts.json")
+	for i, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
 			expected, err := project.ParseGherkin(c.Feature)
 			if err != nil {
@@ -250,6 +255,10 @@ func TestAccountEqualsTheElixirAccountingOnEveryReference(t *testing.T) {
 			legacy := generic(got).(map[string]any)
 			for _, scenario := range legacy["scenarios"].([]any) {
 				delete(scenario.(map[string]any), "unexercised_steps")
+			}
+			if edits != nil && !goldenSame(c.Result, generic(legacy)) {
+				edits.set(legacy, i, "result")
+				return
 			}
 			sameJSON(t, "account", legacy, c.Result)
 		})
