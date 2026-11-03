@@ -5,9 +5,122 @@ package verify
 import (
 	"bytes"
 	"os"
+	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 )
+
+// acceptanceReaperFlag is the argument that makes a Kogen-linked binary the per-run helper.
+const acceptanceReaperFlag = "--kogen-verification-acceptance-reaper"
+
+// prSetChildSubreaper is prctl option PR_SET_CHILD_SUBREAPER.
+const prSetChildSubreaper = 36
+
+// acceptanceReaped runs script under a dedicated per-run helper, which is a child subreaper:
+// every descendant of the command whose parent dies is reparented to the helper, which stops
+// and reaps them once the command's shell has ended. If this program cannot be named, script
+// is returned unchanged and the marker sweep alone applies.
+func acceptanceReaped(script string) string {
+	self, err := os.Executable()
+	if err != nil {
+		return script
+	}
+	return "exec " + shellQuote(self) + " " + acceptanceReaperFlag + " " + shellQuote(script)
+}
+
+// init turns the process into the acceptance helper when, and only when, it was started as
+// acceptanceReaped arranges. Any other process returns at once and keeps its adoption policy.
+func init() {
+	if len(os.Args) != 3 || os.Args[1] != acceptanceReaperFlag {
+		return
+	}
+	os.Exit(runAcceptanceReaper(os.Args[2]))
+}
+
+// runAcceptanceReaper runs /bin/sh -c script as a child subreaper, then stops and reaps every
+// child it adopted, and returns the shell's exit status (128+n for a signal n).
+func runAcceptanceReaper(script string) int {
+	argv := []string{"/bin/sh", "-c", script}
+	if _, _, errno := syscall.Syscall(syscall.SYS_PRCTL, prSetChildSubreaper, 1, 0); errno != 0 {
+		// Without a subreaper this is today's behavior: the marker sweep applies.
+		syscall.Exec("/bin/sh", argv, os.Environ())
+		return 127
+	}
+	// Catch the group signals instead of ignoring them: the command keeps default dispositions
+	// and the helper outlives them to clean up. sys owns cancellation, timeout and interrupt.
+	sigs := make(chan os.Signal, 8)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		for range sigs {
+		}
+	}()
+	attr := &os.ProcAttr{Files: []*os.File{os.Stdin, os.Stdout, os.Stderr}, Env: os.Environ()}
+	proc, err := os.StartProcess("/bin/sh", argv, attr)
+	if err != nil {
+		return 127
+	}
+	state, err := proc.Wait()
+	if err != nil {
+		return 127
+	}
+	stopAdoptedChildren()
+	if ws, ok := state.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return 128 + int(ws.Signal())
+	}
+	return state.ExitCode()
+}
+
+// stopAdoptedChildren reaps and stops this process's children until a snapshot shows none:
+// SIGTERM once to each during the grace, SIGKILL on every pass after it. Killing a parent makes
+// its surviving descendants children on the next pass. Children of another user, and those that
+// refused a signal, are left alone. A process table that cannot be read leaves the rest to the
+// marker sweep.
+func stopAdoptedChildren() {
+	uid, self := os.Getuid(), os.Getpid()
+	graceEnds := time.Now().Add(sweepGrace)
+	refused := map[int]bool{}
+	termed := map[int]bool{}
+	for {
+		// Reaping only here keeps a pid from being recycled between snapshot and signal.
+		for {
+			pid, err := syscall.Wait4(-1, nil, syscall.WNOHANG, nil)
+			if err == syscall.EINTR || pid > 0 {
+				continue
+			}
+			break
+		}
+		procs, err := listProcs()
+		if err != nil {
+			return
+		}
+		remaining := false
+		for _, p := range procs {
+			if p.ppid != self || p.uid != uid || refused[p.pid] {
+				continue
+			}
+			remaining = true
+			if p.zombie {
+				continue // reaped on the next pass
+			}
+			sig := syscall.SIGKILL
+			if time.Now().Before(graceEnds) {
+				if termed[p.pid] {
+					continue
+				}
+				termed[p.pid] = true
+				sig = syscall.SIGTERM
+			}
+			if syscall.Kill(p.pid, sig) == syscall.EPERM {
+				refused[p.pid] = true
+			}
+		}
+		if !remaining {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
 
 // listProcs reads the process table from /proc/<pid>/stat (parent pid, state) and the owner
 // of /proc/<pid>.

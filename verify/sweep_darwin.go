@@ -159,3 +159,6 @@ func procHoldsFile(pid int, dev, ino uint64) bool {
 	}
 	return false
 }
+
+// acceptanceReaped returns script unchanged: only Linux has a child subreaper.
+func acceptanceReaped(script string) string { return script }

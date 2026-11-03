@@ -12,3 +12,6 @@ func listProcs() ([]procEntry, error) {
 func procMarked(pid int, entry string) bool { return false }
 
 func procHoldsFile(pid int, dev, ino uint64) bool { return false }
+
+// acceptanceReaped returns script unchanged: only Linux has a child subreaper.
+func acceptanceReaped(script string) string { return script }

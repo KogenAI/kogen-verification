@@ -5,14 +5,15 @@
 //
 //	sweepdriver run <pattern>   start a background server the way pattern says (see patterns)
 //	sweepdriver same <command>  the run's status and output next to those of /bin/sh -c command
-//	sweepdriver spawn [-setsid] [-clearenv] <pidfile> <program> [args...]
+//	sweepdriver spawn [-setsid] [-clearenv] [-closefds] <pidfile> <program> [args...]
 //
 // run exits 0 when the server is stopped, the three processes the run did not start are
 // running and the run returned status 3 and fixtureOutput; 1 otherwise; 2 when the harness
 // itself failed. same exits 0 unless the harness failed. spawn is the launcher the fixtures
 // use: it starts program with its standard streams on /dev/null, in a new session with
 // -setsid and with an empty environment with -clearenv, writes the program's pid to pidfile
-// and exits without waiting, so the program is reparented. It closes no inherited descriptor.
+// and exits without waiting, so the program is reparented. It passes every inherited
+// descriptor on to program, unless -closefds: then program receives only its standard streams.
 package main
 
 import (
@@ -32,9 +33,10 @@ import (
 )
 
 // patterns are the fixture acceptance commands, one per way a background server is started,
-// and the controls of this harness. {driver} is this program, {sleep} is sleep, {pidfile} the
-// file that receives the server's pid and {before} the pid file of the process started before
-// the run. Every pattern but the last control then runs fixtureTail.
+// and the controls of this harness. {driver} is this program, {sleep} is sleep, {python} is
+// python3 running popenDetach, {pidfile} the file that receives the server's pid and {before}
+// the pid file of the process started before the run. Every pattern but the last control then
+// runs fixtureTail.
 var patterns = map[string]string{
 	"plain &":                              `{sleep} 300 >/dev/null 2>&1 & echo $! > {pidfile}`,
 	"nohup":                                `nohup {sleep} 300 >/dev/null 2>&1 & echo $! > {pidfile}`,
@@ -42,6 +44,10 @@ var patterns = map[string]string{
 	"env -i, same group":                   `env -i {sleep} 300 >/dev/null 2>&1 & echo $! > {pidfile}`,
 	"(env -i x &), same group":             `(env -i {sleep} 300 >/dev/null 2>&1 & echo $! > {pidfile})`,
 	"env cleared, setsid, launcher exited": `{driver} spawn -setsid -clearenv {pidfile} {sleep} 300`,
+
+	// Launchers that close inherited descriptors, so the server holds no marker descriptor.
+	"python Popen, env cleared, new session, launcher exited":  `{python} {pidfile} {sleep}`,
+	"descriptors closed, env cleared, setsid, launcher exited": `{driver} spawn -setsid -clearenv -closefds {pidfile} {sleep} 300`,
 
 	// Controls: a server that ends by itself (accepted), one that the run did not start and
 	// that keeps running, a run that stops a process it did not start, and a run with another
@@ -51,6 +57,14 @@ var patterns = map[string]string{
 	"control: the run stops a process it did not start": `kill -9 "$(cat {before})"; {sleep} 0 >/dev/null 2>&1 & echo $! > {pidfile}`,
 	"control: other exit status and output":             `{sleep} 0 >/dev/null 2>&1 & echo $! > {pidfile}; printf 'other output\n'; sleep 1; exit 4`,
 }
+
+// popenDetach is the reported launcher: Python's subprocess.Popen with its default close_fds,
+// an empty environment and a new session. It writes the server's pid to argv[1] and exits.
+const popenDetach = `import subprocess, sys
+p = subprocess.Popen([sys.argv[2], "300"], env={}, start_new_session=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+open(sys.argv[1], "w").write(str(p.pid))
+`
 
 // fixtureTail prints to both streams, keeps the run going for a second (the process started
 // during the run starts then) and exits 3.
@@ -98,19 +112,28 @@ func fail(msg string) {
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 func spawn(args []string) {
-	setsid, clearenv := false, false
+	setsid, clearenv, closefds := false, false, false
 	for ; len(args) > 0 && strings.HasPrefix(args[0], "-"); args = args[1:] {
 		switch args[0] {
 		case "-setsid":
 			setsid = true
 		case "-clearenv":
 			clearenv = true
+		case "-closefds":
+			closefds = true
 		default:
 			fail("unknown spawn flag " + args[0])
 		}
 	}
 	if len(args) < 2 {
-		fail("usage: sweepdriver spawn [-setsid] [-clearenv] <pidfile> <program> [args...]")
+		fail("usage: sweepdriver spawn [-setsid] [-clearenv] [-closefds] <pidfile> <program> [args...]")
+	}
+	if closefds {
+		// Mark every descriptor above the standard streams close-on-exec, so program
+		// inherits none of them.
+		for fd := 3; fd < 1024; fd++ {
+			syscall.CloseOnExec(fd)
+		}
 	}
 	cmd := exec.Command(args[1], args[2:]...)
 	if clearenv {
@@ -186,10 +209,16 @@ func run(pattern string) int {
 	if err != nil {
 		fail(err.Error())
 	}
+	python := "python3"
+	if strings.Contains(tmpl, "{python}") {
+		if python, err = exec.LookPath("python3"); err != nil {
+			fail(err.Error())
+		}
+	}
 	dir := project()
 	defer os.RemoveAll(dir)
 	pidFile := func(name string) string { return filepath.Join(dir, name+".pid") }
-	command := strings.NewReplacer("{driver}", quote(self), "{sleep}", quote(sleep), "{pidfile}", quote(pidFile("server")),
+	command := strings.NewReplacer("{driver}", quote(self), "{sleep}", quote(sleep), "{python}", quote(python)+" -c "+quote(popenDetach), "{pidfile}", quote(pidFile("server")),
 		"{before}", quote(pidFile("before"))).Replace(tmpl)
 	if pattern != "control: other exit status and output" {
 		command += fixtureTail

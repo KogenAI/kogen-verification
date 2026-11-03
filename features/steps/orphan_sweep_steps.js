@@ -62,6 +62,19 @@ Then('1.5 seconds after RunAcceptance returns, that server is stopped', function
     `${shown}: the server the acceptance command started is ${report.server} 1.5 seconds after RunAcceptance returned; report ${JSON.stringify(report)}`);
 });
 
+// On Linux the server must be stopped. macOS has no subreaper and keeps the marker sweep, which
+// cannot attribute a server that holds neither marker, so there the server is not judged; the
+// step records what it saw instead.
+Then('on Linux, 1.5 seconds after RunAcceptance returns, that server is stopped', function () {
+  const { shown, report } = this.sweep;
+  if (process.platform !== 'linux') {
+    this.log(`${shown}: not judged on ${process.platform} (no subreaper; the marker sweep is kept): the server is ${report.server} 1.5 seconds after RunAcceptance returned`);
+    return;
+  }
+  assert.equal(report.server, 'stopped',
+    `${shown}: on Linux the server the acceptance command started is ${report.server} 1.5 seconds after RunAcceptance returned; report ${JSON.stringify(report)}`);
+});
+
 Then('the processes the run did not start are still running', function () {
   const { shown, report } = this.sweep;
   const processes = {
@@ -101,4 +114,16 @@ Then('its exit status is {int} and its output is {string}', function (status, ou
 Then('its exit status is {int}', function (status) {
   const { shown, report } = this.same;
   assert.equal(report.status, status, `${shown}: RunAcceptance returned status ${report.status}`);
+});
+
+// The Linux files are not compiled by the checks on a macOS host; go vet with GOOS=linux
+// compiles and vets every package and its tests for Linux.
+When('the module is vetted for Linux', { timeout: 300 * 1000 }, function () {
+  const r = spawnSync('go', ['vet', './...'], { encoding: 'utf8', env: { ...process.env, GOOS: 'linux' }, timeout: 280 * 1000 });
+  this.linuxVet = { status: r.status, error: r.error, output: `${r.stdout}${r.stderr}` };
+});
+
+Then('go vet for Linux reported no problem', function () {
+  const { status, error, output } = this.linuxVet;
+  assert.ok(!error && status === 0, `GOOS=linux go vet ./... ${error ? `failed: ${error.message}` : `exited ${status}`}:\n${output}`);
 });
