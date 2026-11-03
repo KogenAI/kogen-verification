@@ -209,7 +209,14 @@ func (pr Probe) Run(ctx context.Context, s *sys.Session) (ProbeResult, error) {
 		}
 	}
 	slices.Sort(changes)
-	result := ProbeResult{Status: r.Status, TimedOut: r.TimedOut, Output: r.Output, Wall: wall, InputChanges: changes}
+	output := r.Output
+	if strings.Contains(output, "fatal: not a git repository") {
+		if !strings.HasSuffix(output, "\n") {
+			output += "\n"
+		}
+		output += "probe copy has no git metadata: scratch-copy isolation, not evidence that the source project lacks a repository\n"
+	}
+	result := ProbeResult{Status: r.Status, TimedOut: r.TimedOut, Output: output, Wall: wall, InputChanges: changes}
 	if observer != nil {
 		group := 0
 		for _, g := range ps.Groups() {
