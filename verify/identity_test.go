@@ -3,7 +3,9 @@ package verify
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -147,5 +149,100 @@ func TestIdentityOutputAndEmptyEnvironment(t *testing.T) {
 	tool := probeIdentityTool("node", dir, dir, []string{"PATH=" + dir})
 	if tool.Status != "ok" || tool.Version == nil || *tool.Version != strings.Repeat("x", 512) {
 		t.Fatal(tool)
+	}
+}
+
+func identityToolPath(t *testing.T, tools any, name string) any {
+	t.Helper()
+	for _, tool := range tools.([]identityTool) {
+		if tool.Name == name {
+			if tool.Path == nil {
+				return nil
+			}
+			return *tool.Path
+		}
+	}
+	t.Fatalf("no tool %s in %v", name, tools)
+	return nil
+}
+
+func TestIdentityEmptyPathEntryIsRelativeAndStable(t *testing.T) {
+	p := newProj(t)
+	bin := t.TempDir()
+	for _, name := range []string{"sh", "grep", "cp", "git"} {
+		src, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(src, filepath.Join(bin, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p.write("node", "#!/bin/sh\necho stub node v1\n")
+	if err := os.Chmod(filepath.Join(p.Root, "node"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	p.commit("node stub")
+	p.Env = append(slices.DeleteFunc(p.Env, func(kv string) bool { return strings.HasPrefix(kv, "PATH=") }), "PATH="+bin+":")
+	s := sys.NewWith(p.Env, p.Root)
+	hashes := map[string][]any{}
+	for range 2 {
+		log := &memLog{}
+		in := p.input(1)
+		in.Log = log
+		pass, err := Verify(context.Background(), s, in)
+		if err != nil || !pass.Green {
+			t.Fatalf("pass: %+v %v", pass, err)
+		}
+		ids := log.named("check_identity")
+		if len(ids) != 1 {
+			t.Fatal(ids)
+		}
+		if got := identityToolPath(t, ids[0]["tools"], "node"); got != "node" {
+			t.Fatalf("node path %v", got)
+		}
+		if got := identityToolPath(t, ids[0]["tools"], "git"); got != filepath.Join(bin, "git") {
+			t.Fatalf("git path %v", got)
+		}
+		for _, e := range log.named("command") {
+			hashes[e["command"].(string)] = append(hashes[e["command"].(string)], e["identity_sha256"])
+		}
+	}
+	if len(hashes) == 0 {
+		t.Fatal("no commands")
+	}
+	for command, h := range hashes {
+		if len(h) != 2 || h[0] != h[1] {
+			t.Fatalf("%s: %v", command, h)
+		}
+	}
+}
+
+func TestIdentityRelativePathEntryRecordsPathUnderDir(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "tools"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(dir, "tools", "node"), filepath.Join(outside, "git")} {
+		if err := os.WriteFile(path, []byte("#!/bin/sh\necho stub\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id := snapshotIdentity(sys.NewWith([]string{"PATH=" + outside + ":tools"}, dir), Tools{}, "tree", dir)
+	var node, git identityTool
+	for _, tool := range id.Tools {
+		switch tool.Name {
+		case "node":
+			node = tool
+		case "git":
+			git = tool
+		}
+	}
+	if node.Path == nil || *node.Path != "tools/node" || node.Status != "ok" {
+		t.Fatal(node)
+	}
+	if git.Path == nil || *git.Path != filepath.Join(outside, "git") {
+		t.Fatal(git)
 	}
 }

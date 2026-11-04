@@ -141,7 +141,12 @@ func probeIdentityTool(name, path, dir string, env []string) identityTool {
 	if resolved == "" {
 		return t
 	}
-	t.Path = &resolved
+	recorded := resolved
+	// A path under dir is recorded relative to it: dir is a random scratch folder.
+	if rel, err := filepath.Rel(dir, resolved); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		recorded = rel
+	}
+	t.Path = &recorded
 	t.Status = "error"
 	args := []string{"--version"}
 	if name == "go" {
