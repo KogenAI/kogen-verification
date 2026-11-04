@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -340,73 +342,213 @@ func indent(text string) string {
 	return strings.Join(lines, "\n")
 }
 
-// Feedback is what goes back to the repair owner after a red pass: the failed items with
-// their evidence and the items that did not run. acceptanceRun is the configured acceptance
-// command; completion names the tool the owner calls when done (`finish`).
+// Feedback is what goes back to the repair owner after a red pass. It is limited to
+// 16,384 UTF-8 bytes, including a final omission notice. Only complete lines are
+// retained; the notice counts original failing items with any omitted content once,
+// and bytes omitted from the unbounded rendered tail. Records are not changed.
 func (p Pass) Feedback(acceptanceRun, completion string) string {
 	if completion == "" {
 		completion = "finish"
 	}
-	parts := []string{fmt.Sprintf("Verification pass %d is not green. Fix the implementation (the approved acceptance files cannot change), then call %s again.", p.N, completion)}
-	if a := p.Acceptance; a != nil && len(a.Problems) > 0 {
-		parts = append(parts, fmt.Sprintf("acceptance (%s): failed, exit status %d", acceptanceRun, a.Status))
-		for _, problem := range a.Problems {
-			parts = append(parts, indent(problem))
+	var parts []feedbackPart
+	add := func(text string, count int) { parts = append(parts, feedbackPart{text, count}) }
+	add(fmt.Sprintf("Verification pass %d is not green. Fix the implementation (the approved acceptance files cannot change), then call %s again.", p.N, completion), 0)
+	problems := func(ps []string, scenarios []ScenarioResult) {
+		items := make([]feedbackItem, 0, len(ps))
+		for _, problem := range ps {
+			item := feedbackItem{text: indent(problem), detail: strings.TrimSpace(problem), name: problem}
+			if match := feedbackInvariant.FindStringSubmatch(problem); match != nil {
+				item.name = match[1]
+				item.display = indent(normalizeFeedback(problem, item.name))
+				item.detail = item.display
+			}
+			for _, sc := range scenarios {
+				prefix := fmt.Sprintf("%s: %s (line %d)", sc.Status, sc.Name, sc.Line)
+				if strings.HasPrefix(problem, prefix) && (len(problem) == len(prefix) || strings.HasPrefix(problem[len(prefix):], ":")) {
+					item.name = sc.Name
+					item.display = indent(normalizeFeedback(strings.TrimPrefix(problem[len(prefix):], ":"), sc.Name))
+					item.detail = sc.Status + ":" + item.display
+					break
+				}
+			}
+			items = append(items, item)
+		}
+		for _, part := range groupFeedback(items, "scenarios") {
+			parts = append(parts, part)
 		}
 	}
+	if a := p.Acceptance; a != nil && len(a.Problems) > 0 {
+		add(fmt.Sprintf("acceptance (%s): failed, exit status %d", acceptanceRun, a.Status), 0)
+		problems(a.Problems, a.Scenarios)
+	}
 	if p.Model.Failed() {
-		parts = append(parts, "model: failed")
-		for _, problem := range p.Model.Problems {
-			parts = append(parts, indent(problem))
-		}
+		add("model: failed", 0)
+		problems(p.Model.Problems, nil)
 	}
 	for _, m := range p.MaintainedModels {
 		if m.Result.Failed() {
-			parts = append(parts, "model "+m.Path+": failed")
-			for _, problem := range m.Result.Problems {
-				parts = append(parts, indent(problem))
-			}
+			add("model "+m.Path+": failed", 0)
+			problems(m.Result.Problems, nil)
 		}
 	}
 	for _, f := range p.MaintainedFeatures {
 		if f.Result != nil && len(f.Result.Problems) > 0 {
-			parts = append(parts, fmt.Sprintf("feature %s (%s): failed, exit status %d", f.Path, acceptanceRun, f.Result.Status))
-			for _, problem := range f.Result.Problems {
-				parts = append(parts, indent(problem))
-			}
+			add(fmt.Sprintf("feature %s (%s): failed, exit status %d", f.Path, acceptanceRun, f.Result.Status), 0)
+			problems(f.Result.Problems, f.Result.Scenarios)
 		}
 	}
+	var commands []feedbackItem
 	for _, c := range slices.Concat(p.Setup, p.Checks) {
 		if c.Status != 0 {
-			parts = append(parts, fmt.Sprintf("check %s (%s): failed, exit status %d\n%s", c.Name, c.Command, c.Status, indent(Tail(c.Output, 60))))
+			commands = append(commands, feedbackItem{text: fmt.Sprintf("check %s (%s): failed, exit status %d\n%s", c.Name, c.Command, c.Status, indent(Tail(c.Output, 60))), detail: strconv.Itoa(c.Status) + ":" + normalizeFeedback(Tail(c.Output, 60), c.Name), name: c.Name, display: indent(normalizeFeedback(Tail(c.Output, 60), c.Name))})
 		}
 	}
+	parts = append(parts, groupFeedback(commands, "checks")...)
 	for _, section := range []struct {
 		label   string
 		results []CommandResult
 	}{{"Speculative results", p.Speculative}, {"Cancelled work", p.Cancelled}} {
 		if len(section.results) > 0 {
-			parts = append(parts, section.label)
+			add(section.label, 0)
+			var items []feedbackItem
 			for _, r := range section.results {
-				parts = append(parts, fmt.Sprintf("%s (%s): status %d\n%s", r.Name, r.Command, r.Status, indent(Tail(r.Output, 60))))
+				text := fmt.Sprintf("%s (%s): status %d\n%s", r.Name, r.Command, r.Status, indent(Tail(r.Output, 60)))
+				if r.Status == 0 {
+					// Passed results remain distinct and are not failing items.
+					items = append(items, feedbackItem{text: text})
+				} else {
+					detail := normalizeFeedback(Tail(r.Output, 60), r.Name)
+					items = append(items, feedbackItem{text: text, detail: strconv.Itoa(r.Status) + ":" + detail, name: r.Name, display: indent(detail)})
+				}
 			}
+			parts = append(parts, groupFeedback(items, "checks")...)
 		}
 	}
 	if line := coverageLine(p.UncoveredAcceptance); line != "" {
-		parts = append(parts, line)
+		add(line, 0)
 	}
 	for _, failure := range p.Failing {
 		if strings.HasPrefix(failure, "uncovered acceptance: ") {
-			parts = append(parts, failure)
+			add(failure, 0)
 		}
 	}
 	if len(p.Moved) > 0 {
-		parts = append(parts, "files changed while checks ran: "+strings.Join(p.Moved, ", "))
+		add("files changed while checks ran: "+strings.Join(p.Moved, ", "), 0)
 	}
 	if len(p.NotRun) > 0 {
-		parts = append(parts, NotRunNotice(p.NotRun))
+		add(NotRunNotice(p.NotRun), 0)
 	}
-	return strings.Join(parts, "\n")
+	return limitFeedback(parts)
+}
+
+type feedbackPart struct {
+	text  string
+	count int
+}
+type feedbackItem struct{ text, detail, name, display string }
+
+var feedbackInvariant = regexp.MustCompile(`^model\.qnt: invariant (.+?) violated \(seed [^)]*\)`)
+
+var feedbackLineNumber = regexp.MustCompile(`(?i)(\bline\s+)[0-9]+`)
+
+func normalizeFeedback(detail, name string) string {
+	if name != "" {
+		re := regexp.MustCompile(`(^|[^[:alnum:]_])` + regexp.QuoteMeta(name) + `($|[^[:alnum:]_])`)
+		detail = re.ReplaceAllString(detail, "${1}${2}")
+	}
+	detail = feedbackLineNumber.ReplaceAllString(detail, "${1}")
+	lines := strings.Split(strings.TrimSpace(detail), "\n")
+	for i := range lines {
+		lines[i] = strings.TrimSpace(lines[i])
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+func groupFeedback(items []feedbackItem, label string) []feedbackPart {
+	groups := map[string][]int{}
+	for i, item := range items {
+		if item.detail != "" {
+			groups[item.detail] = append(groups[item.detail], i)
+		}
+	}
+	var parts []feedbackPart
+	for i, item := range items {
+		group := groups[item.detail]
+		if len(group) == 0 {
+			parts = append(parts, feedbackPart{item.text, 0})
+			continue
+		}
+		if group[0] != i {
+			continue
+		}
+		if len(group) == 1 {
+			parts = append(parts, feedbackPart{item.text, 1})
+			continue
+		}
+		names := make([]string, 0, 5)
+		for _, j := range group {
+			if len(names) < 5 {
+				names = append(names, items[j].name)
+			}
+		}
+		display := item.text
+		if item.display != "" {
+			display = item.display
+		}
+		parts = append(parts, feedbackPart{display + fmt.Sprintf("\n  %d %s: %s", len(group), label, strings.Join(names, ", ")), len(group)})
+	}
+	return parts
+}
+func limitFeedback(parts []feedbackPart) string {
+	const budget = 16384
+	texts := make([]string, len(parts))
+	for i := range parts {
+		texts[i] = parts[i].text
+	}
+	full := strings.Join(texts, "\n")
+	if len(full) <= budget {
+		return full
+	}
+	// Each part occupies an interval in the joined output. An item intersecting the
+	// omitted tail is counted even when an earlier line of that item was retained.
+	starts := make([]int, len(parts))
+	ends := make([]int, len(parts))
+	pos := 0
+	for i, part := range parts {
+		starts[i] = pos
+		pos += len(part.text)
+		ends[i] = pos
+		pos++
+	}
+	cut := 0
+	for at := 0; at < len(full); {
+		n := strings.IndexByte(full[at:], '\n')
+		if n < 0 {
+			break
+		}
+		next := at + n + 1
+		if next > budget {
+			break
+		}
+		cut = next
+		at = next
+	}
+	for {
+		count := 0
+		for i, part := range parts {
+			if ends[i] > cut && starts[i] < len(full) {
+				count += part.count
+			}
+		}
+		notice := fmt.Sprintf("left out %d items, %d bytes", count, len(full)-cut)
+		if cut+len(notice) <= budget {
+			return full[:cut] + notice
+		}
+		if cut == 0 {
+			return notice
+		}
+		prev := strings.LastIndexByte(full[:cut-1], '\n')
+		cut = prev + 1
+	}
 }
 
 // Results is the green pass as the reviewer's material states it: scenarios passed, the
