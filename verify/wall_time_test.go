@@ -57,12 +57,29 @@ func TestWallTimeStageAndMaintainedFeature(t *testing.T) {
 		t.Fatalf("maintained: %+v %v", pass, err)
 	}
 	requireWall(t, log.named("command_result"), "acceptance", "model", "model", "acceptance")
+	ids := log.named("check_identity")
+	if len(ids) != 1 {
+		t.Fatal(ids)
+	}
+	id := ids[0]
+	for _, e := range log.named("command") {
+		want := identityHash([]any{e["command"], id["tree"], id["tools"], id["lockfiles"], id["environment"], id["host"]})
+		if e["identity_sha256"] != want {
+			t.Fatal(e)
+		}
+	}
 }
 
 func TestWallTimeDeadlineAndNeverStarted(t *testing.T) {
 	p := newProj(t)
 	p.Config.Setup = []string{"sleep 30", "echo never"}
 	s, _ := p.session()
+	// Keep version probes fast so the deadline exercises the setup command.
+	bin := t.TempDir()
+	if err := os.Symlink("/bin/sleep", filepath.Join(bin, "sleep")); err != nil {
+		t.Fatal(err)
+	}
+	s.Env = append(s.Env, "PATH="+bin)
 	log := &memLog{}
 	in := p.input(1)
 	in.Log = log

@@ -207,6 +207,11 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 			p.UncoveredAcceptance = files
 			p.UncoveredAcceptanceCount = new(int)
 		}
+		id := snapshotIdentity(s, in.Tools, before, scratch)
+		if in.Log != nil {
+			logEvent(in.Log, id.event())
+			in.Log = &identityLogger{inner: in.Log, identity: id}
+		}
 		red := false
 		for index := 0; index < len(items); index++ {
 			it := items[index]
