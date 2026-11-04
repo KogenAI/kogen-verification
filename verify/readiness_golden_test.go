@@ -14,19 +14,16 @@ import (
 	"github.com/KogenAI/kogen-coordinator/project"
 )
 
-// readinessGolden is one project of testdata/golden/readiness.json: a hash-pinned readiness record
-// recorded for a fixture project of testdata/. The inputs are `project`, `scenarios` and
-// `record_text`, a historical record from before execution observations existed that must stay
-// what it was. `go test -update` rewrites `head`, `tree`, `sha256`, `baseline`, `record` (the
-// written record without `step_warnings` and without the scenarios' `unexercised_steps`, which
-// the test supplies itself) and `package_facts_keys` (the sorted keys of the package facts file);
-// no other byte of the file is rewritten.
+// readinessGolden is one fixture project in testdata/golden/readiness.json. The inputs are
+// `project`, `scenarios` and the historical `record_text`, whose bytes must stay unchanged.
+// Coordinator-owned baseline and hash values in the golden are inert: the record comparison
+// uses current readiness inputs instead. `go test -update` rewrites `head`, `tree`, `record`
+// (except its baseline and hash, step_warnings and scenarios' unexercised_steps) and
+// `package_facts_keys`; no other byte of the file is rewritten.
 type readinessGolden struct {
 	Project    string          `json:"project"`
 	Head       string          `json:"head"`
 	Tree       string          `json:"tree"`
-	SHA256     string          `json:"sha256"`
-	Baseline   []string        `json:"baseline"`
 	Record     json.RawMessage `json:"record"`
 	RecordText string          `json:"record_text"`
 	Scenarios  []struct {
@@ -104,19 +101,9 @@ func TestReadinessRecordEqualsTheElixirRecordAndReadsBack(t *testing.T) {
 					edits.set(in.tree, i, "tree")
 					g.Tree = in.tree
 				}
-				if in.sha != g.SHA256 {
-					edits.set(in.sha, i, "sha256")
-					g.SHA256 = in.sha
-				}
-				if !slices.Equal(in.baseline, g.Baseline) {
-					edits.set(in.baseline, i, "baseline")
-					g.Baseline = in.baseline
-				}
 			}
 			eq(t, "head", in.head, g.Head)
 			eq(t, "tree", in.tree, g.Tree)
-			eq(t, "sha256", in.sha, g.SHA256)
-			eqSlice(t, "baseline", in.baseline, g.Baseline)
 
 			intent, _, err := project.CheckIntent(root, fixtureSlug, nil)
 			if err != nil {
@@ -153,8 +140,11 @@ func TestReadinessRecordEqualsTheElixirRecordAndReadsBack(t *testing.T) {
 			path := readinessPath(root, fixtureSlug)
 			got := string(must(os.ReadFile(path)))
 			if edits != nil {
-				// The recorded record has neither step_warnings nor the scenarios' unexercised_steps.
+				// Preserve inert coordinator-owned values, and omit the fields supplied by the test.
 				written := generic(json.RawMessage(got)).(map[string]any)
+				oldRecord := generic(g.Record).(map[string]any)
+				written["baseline"] = oldRecord["baseline"]
+				written["sha256"] = oldRecord["sha256"]
 				delete(written, "step_warnings")
 				if scenarios, ok := written["scenarios"].([]any); ok {
 					for _, scenario := range scenarios {
@@ -169,6 +159,8 @@ func TestReadinessRecordEqualsTheElixirRecordAndReadsBack(t *testing.T) {
 			// Equal by value: Elixir orders the keys of small nested maps its own way.
 			var expectedRecord map[string]any
 			json.Unmarshal(g.Record, &expectedRecord)
+			expectedRecord["baseline"] = in.baseline
+			expectedRecord["sha256"] = in.sha
 			expectedRecord["step_warnings"] = []any{}
 			for _, scenario := range expectedRecord["scenarios"].([]any) {
 				scenario.(map[string]any)["unexercised_steps"] = []any{}
