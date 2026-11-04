@@ -28,8 +28,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/sys"
 )
 
 // patterns are the fixture acceptance commands, one per way a background server is started,

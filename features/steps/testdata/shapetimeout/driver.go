@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // Installed only in an isolated acceptance copy as verify/shapetimeout_acceptance_test.go. It runs

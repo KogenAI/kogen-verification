@@ -5,7 +5,7 @@ import (
 	"syscall"
 	"time"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // noLiveGrace is how long a command's process group may have no member while the command's

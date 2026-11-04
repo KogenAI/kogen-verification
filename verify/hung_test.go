@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // shortenGrace sets the fixed no-live-process grace for one test and restores it. Such tests

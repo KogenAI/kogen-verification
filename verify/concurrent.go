@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // independentGo recognizes only the standard, test-free Go invocations.

@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/git"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // testEnv is the process environment without Git's own variables, isolated from the
@@ -54,7 +54,7 @@ func newFixtureIn(t *testing.T, name string, extraEnv ...string) *fixture {
 	env := testEnv(extraEnv...)
 	f := &fixture{t: t, Root: root, Env: env, Repo: git.New(root, env)}
 	f.git("init", "-q")
-	f.git("config", "user.name", "Fixture")
+	f.git("config", "user.name", "Test Author")
 	f.git("config", "user.email", "fixture@example.invalid")
 	f.git("config", "core.hooksPath", t.TempDir())
 	f.git("config", "commit.gpgsign", "false")

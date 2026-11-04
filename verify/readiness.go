@@ -17,7 +17,7 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // Readiness checks whether an Intent is ready to build (SHP-8): the SHP-5 rules, the model

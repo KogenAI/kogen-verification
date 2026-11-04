@@ -11,6 +11,9 @@ The fixture.
 ## Decisions
 - Fixture decision. (source: request)
 
+## Source comparison
+- Addressed: fixture request.
+
 ## Tests
 - none: fixture
 

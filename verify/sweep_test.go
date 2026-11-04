@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 func TestAcceptanceTargets(t *testing.T) {
@@ -468,7 +468,8 @@ func TestStepMarkerVariables(t *testing.T) {
 		t.Fatalf("two steps saw the same value %q", envs["one"])
 	}
 	// The acceptance step: its own value, and no step marker (cleared here so only the step's own matters).
-	s = sys.NewWith(os.Environ(), root)
+	env := slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, stepMarker+"=") })
+	s = sys.NewWith(env, root)
 	out := filepath.Join(root, "acceptance")
 	command := `printf '%s|%s' "${KOGEN_STEP_RUN-unset}" "$KOGEN_ACCEPTANCE_RUN" > '` + out + `'`
 	if _, err := RunAcceptance(context.Background(), s, root, Tools{}, slug, command, filepath.Join(root, "r.ndjson"), nil, nil); err != nil {

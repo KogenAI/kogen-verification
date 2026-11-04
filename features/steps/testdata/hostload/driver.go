@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // Installed only in an isolated acceptance copy; uses the real readiness fixture.

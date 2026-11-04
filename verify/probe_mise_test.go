@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 func TestProbeKeepsInstalledMiseData(t *testing.T) {

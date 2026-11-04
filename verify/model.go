@@ -10,7 +10,7 @@ import (
 	"unicode"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // ModelResult is the Quint model check of one pass: not applicable ("none"), not run

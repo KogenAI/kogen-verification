@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // A verification command that would start after the caller interrupted returns the interrupt

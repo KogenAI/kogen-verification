@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 func TestGreenPassRunsEveryItemInOrderOnTheCleanCandidate(t *testing.T) {

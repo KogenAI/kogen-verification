@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // SHP-10: the production deadline is five minutes; a probe still running at its deadline is
@@ -23,14 +23,16 @@ func TestProbeDeadlineStopsTheProbeAndReportsTimedOut(t *testing.T) {
 	if production != 5*time.Minute {
 		t.Fatalf("production probe deadline = %v, want 5m0s", production)
 	}
-	r, err := RunProbe(context.Background(), sessionFor(root), root, "sleep 600", nil)
+	// Reap the group member before the shell exits, including under an outer subreaper.
+	const command = "trap 'wait; exit 143' TERM; sleep 600 & wait"
+	r, err := RunProbe(context.Background(), sessionFor(root), root, command, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !r.TimedOut || r.Status == 0 {
 		t.Fatalf("probe = %+v, want timed out with a failing status", r)
 	}
-	if len(seen) != 1 || seen[0].Deadline != 200*time.Millisecond || seen[0].Command != "sleep 600" || seen[0].Group <= 1 {
+	if len(seen) != 1 || seen[0].Deadline != 200*time.Millisecond || seen[0].Command != command || seen[0].Group <= 1 {
 		t.Fatalf("observed probes = %+v", seen)
 	}
 	if err := syscall.Kill(-seen[0].Group, 0); err == nil {

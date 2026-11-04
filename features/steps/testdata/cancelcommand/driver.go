@@ -15,13 +15,13 @@ import (
 	"time"
 	_ "unsafe"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // This hook already exists in the pinned sys dependency. Link only in the isolated
 // acceptance test binary; do not add a production hook or change module-cache bytes.
 //
-//go:linkname cancelCommandStartHook kogen-loop/sys.startHook
+//go:linkname cancelCommandStartHook github.com/KogenAI/kogen-loop/sys.startHook
 var cancelCommandStartHook func(string)
 
 func cancelCommandAlive(pid int) (bool, error) {

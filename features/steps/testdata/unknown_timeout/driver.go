@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // Exercise the same bounded command and refusal boundary used by readiness.

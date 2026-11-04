@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 func TestAttemptBoundsEachStepAndKeepsEvidence(t *testing.T) {

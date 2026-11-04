@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // Tools are Kogen's own Node, Quint and Cucumber, as recorded at install (INS-4, LOOP-12).

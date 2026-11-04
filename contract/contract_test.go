@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/sys"
 )
 
 func TestShapingStepReports(t *testing.T) {
@@ -109,6 +109,9 @@ func TestPassWireRecords(t *testing.T) {
 	}
 }
 
+// timeoutCommand reaps its child on group termination, also under an outer subreaper.
+const timeoutCommand = "trap 'wait; exit 143' TERM; sleep 600 & wait"
+
 func TestProbeCustodyAndResults(t *testing.T) {
 	root := t.TempDir()
 	s := sys.NewWith(os.Environ(), root)
@@ -128,12 +131,12 @@ func TestProbeCustodyAndResults(t *testing.T) {
 	if production != 5*time.Minute {
 		t.Fatal(production)
 	}
-	r, e := verify.RunProbe(context.Background(), s, root, "sleep 600", nil)
+	r, e := verify.RunProbe(context.Background(), s, root, timeoutCommand, nil)
 	if e != nil || !r.TimedOut || r.Status == 0 || len(seen) != 1 {
 		t.Fatalf("%+v %v %+v", r, e, seen)
 	}
 	o := seen[0]
-	if o.Command != "sleep 600" || o.Deadline != 200*time.Millisecond || o.Group <= 1 {
+	if o.Command != timeoutCommand || o.Deadline != 200*time.Millisecond || o.Group <= 1 {
 		t.Fatal(o)
 	}
 	if syscall.Kill(-o.Group, 0) == nil {
@@ -222,7 +225,7 @@ func TestDeclaredEvidenceRetained(t *testing.T) {
 		name, command, output string
 		exit                  int
 		ok, timed             bool
-	}{{"match", "cat route.cjs; exit 23", "route bytes\n", 23, true, false}, {"mismatch", "printf wrong", "expected", 0, false, false}, {"timeout", "sleep 600", "", 0, false, true}} {
+	}{{"match", "cat route.cjs; exit 23", "route bytes\n", 23, true, false}, {"mismatch", "printf wrong", "expected", 0, false, false}, {"timeout", timeoutCommand, "", 0, false, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			declaration := verify.Declaration{ID: "route", Kind: "capability", Inputs: []string{"route.cjs"}, Observers: []string{}, Checks: []verify.DeclaredCheck{{Name: "support", Command: tc.command, Exit: tc.exit, Output: tc.output}}}
 			b, e := json.Marshal(declaration)
@@ -322,7 +325,7 @@ func TestReadinessRecordAndIdentity(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	ready := &verify.Ready{Intent: intent, Model: intent.Model, Head: "e6a00722e20d6d79a98c8524f62069c14eebdc19", CandidateTree: "3642ddaaf0c665a6418df1202f2715874d4da432", SHA256: "9ad1de0ba63f1b7f4fbd6147534cabeff82f0cbd74d13cba91107867cf19a804", Baseline: []string{".kogen/intents/fixture/intent.md", ".kogen/intents/fixture/acceptance.feature", "features/steps/fixture_steps.js", ".kogen/project.yaml"}, AcceptanceExit: 1}
+	ready := &verify.Ready{Intent: intent, Model: intent.Model, Head: "5c4121dde97fad9e716064a6edf90dc6a5fb96e3", CandidateTree: "aad40d1e2713322a34e1ba6b7a75f08289d1b4b2", SHA256: "7ab465474295b8e57c292840a8c713cd06d57bd5aaa594fd2505ebff01f6eda0", Baseline: []string{".kogen/intents/fixture/intent.md", ".kogen/intents/fixture/acceptance.feature", "features/steps/fixture_steps.js", ".kogen/project.yaml", ".kogen/models.yaml"}, AcceptanceExit: 1}
 	for i, scenario := range scenarios {
 		sr := verify.ScenarioRecord(scenario)
 		sr.UnexercisedSteps = []verify.StepRecord{}

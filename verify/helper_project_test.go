@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 const fixtureSlug = "fixture"
@@ -33,7 +33,7 @@ func intentMD(model string, feasibility string) string {
 		feasibility = "- none"
 	}
 	return "# Fixture intent\n\nSlug: " + fixtureSlug + "\nModel: " + model + "\nAcceptance:\n- " + project.FeaturePath(fixtureSlug) +
-		"\n- features/steps/fixture_steps.js\n\nThe fixture.\n\n## Decisions\n- Fixture decision. (source: request)\n\n## Tests\n- none: fixture\n\n## Feasibility\n" + feasibility + "\n"
+		"\n- features/steps/fixture_steps.js\n\nThe fixture.\n\n## Decisions\n- Fixture decision. (source: request)\n\n## Source comparison\n- Addressed: fixture request.\n\n## Tests\n- none: fixture\n\n## Feasibility\n" + feasibility + "\n"
 }
 
 func writeIntent(f *fixture, model, feasibility string) {

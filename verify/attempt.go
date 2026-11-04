@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // StepTimeout is the bound of every command an approval attempt executes: each step is

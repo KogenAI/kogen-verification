@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // acceptanceMarker is the environment variable that names one acceptance run. Kogen adds it to
