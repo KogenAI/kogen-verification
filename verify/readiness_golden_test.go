@@ -114,6 +114,9 @@ func TestReadinessRecordEqualsTheElixirRecordAndReadsBack(t *testing.T) {
 			for i, e := range expected {
 				result := withResult(e, g.Scenarios[i].Status, g.Scenarios[i].Detail)
 				result.UnexercisedSteps = []StepRecord{}
+				if result.Status == "failed" {
+					result.Phase = "assertion"
+				}
 				scenarios = append(scenarios, result)
 			}
 			ready := &Ready{Intent: intent, Model: intent.Model, Scenarios: scenarios, AcceptanceExit: 1,

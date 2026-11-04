@@ -333,7 +333,7 @@ func TestReadinessRecordAndIdentity(t *testing.T) {
 		if i == 0 {
 			sr.Status = "failed"
 			detail := "acceptance.feature line 3: Then the candidate succeeds\nboom"
-			sr.Detail = &detail
+			sr.Detail, sr.Phase = &detail, "assertion"
 		}
 		ready.Scenarios = append(ready.Scenarios, sr)
 	}

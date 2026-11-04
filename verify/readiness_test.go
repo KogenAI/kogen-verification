@@ -97,13 +97,17 @@ func TestReadinessAcceptsLegitimateRedAndRetainsObservations(t *testing.T) {
 	eq(t, "failures", ready.Failures(), true)
 	rec, _ := p.readinessRecord()
 	eq(t, "outcome", rec["outcome"], "ready")
+	eq(t, "version", rec["version"], any(float64(5)))
+	for _, sc := range rec["scenarios"].([]any) {
+		eq(t, "phase", sc.(map[string]any)["phase"], "assertion")
+	}
 	cached := r.Cached(s, fixtureSlug)
 	if cached == nil || !cached.Failures() {
 		t.Fatal("unchanged red is reused without another check")
 	}
 	obs := Observations(fixtureSlug, cached, "")
 	contains(t, "observations", obs, "Readiness observations\nChecked baseline: "+cached.SHA256+"\nHEAD: "+p.head()+"\nAcceptance exit: 1\nEvidence: .kogen/local/readiness/fixture.json\n")
-	contains(t, "observations", obs, "Scenario: First (acceptance.feature line 2)\nacceptance.feature line 3: Then the candidate succeeds")
+	contains(t, "observations", obs, "Scenario: First (acceptance.feature line 2)\nFailure phase: assertion\nacceptance.feature line 3: Then the candidate succeeds")
 	ack := Acknowledgment(fixtureSlug, cached, "")
 	contains(t, "acknowledgment", ack, "Inspect whether fixtures, inputs and commands reached the intended behavior")
 	contains(t, "acknowledgment", ack, AcknowledgmentGuidance)
@@ -284,6 +288,61 @@ func TestReadinessCachedMissesAreNormal(t *testing.T) {
 	os.WriteFile(path, good, 0o644)
 	if r.Cached(s, fixtureSlug) == nil {
 		t.Fatal("the original record is reusable again")
+	}
+}
+
+func TestReadinessCachedRequiresValidFailurePhases(t *testing.T) {
+	isolateTmp(t)
+	p := newProj(t)
+	p.write("app.txt", "red\n")
+	r := p.readiness()
+	s, _ := p.session()
+	ready, err := r.Check(context.Background(), s, fixtureSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := readinessPath(p.Root, fixtureSlug)
+	good, _ := os.ReadFile(path)
+	cached := r.Cached(s, fixtureSlug)
+	if cached == nil {
+		t.Fatal("setup: the red record must be reusable")
+	}
+	for i, sc := range cached.Scenarios {
+		eq(t, "cached phase", sc.Phase, ready.Scenarios[i].Phase)
+		eq(t, "cached failed phase", sc.Phase, "assertion")
+	}
+	mutate := func(f func(rec map[string]any)) {
+		var rec map[string]any
+		d := json.NewDecoder(strings.NewReader(string(good)))
+		d.UseNumber()
+		d.Decode(&rec)
+		f(rec)
+		b, _ := json.Marshal(rec)
+		os.WriteFile(path, b, 0o644)
+	}
+	first := func(rec map[string]any) map[string]any { return rec["scenarios"].([]any)[0].(map[string]any) }
+	for name, f := range map[string]func(rec map[string]any){
+		"version 4":            func(rec map[string]any) { rec["version"] = json.Number("4") },
+		"failed without phase": func(rec map[string]any) { delete(first(rec), "phase") },
+		"null phase":           func(rec map[string]any) { first(rec)["phase"] = nil },
+		"unknown phase":        func(rec map[string]any) { first(rec)["phase"] = "fixture" },
+		"nonstring phase":      func(rec map[string]any) { first(rec)["phase"] = 1 },
+		"phase on passed": func(rec map[string]any) {
+			sc := first(rec)
+			sc["status"], sc["detail"], sc["phase"] = "passed", nil, "assertion"
+		},
+	} {
+		mutate(f)
+		if r.Cached(s, fixtureSlug) != nil {
+			t.Fatalf("%s: a record without valid phases must be a miss", name)
+		}
+	}
+	for _, phase := range []string{"setup", "action", "assertion", "teardown"} {
+		mutate(func(rec map[string]any) { first(rec)["phase"] = phase })
+		got := r.Cached(s, fixtureSlug)
+		if got == nil || got.Scenarios[0].Phase != phase {
+			t.Fatalf("a %s phase is reusable and returned as recorded: %+v", phase, got)
+		}
 	}
 }
 
@@ -722,5 +781,22 @@ func TestShapeAcceptanceWithoutTimeoutRetainsNothing(t *testing.T) {
 				t.Fatalf("retained %q", paths)
 			}
 		})
+	}
+}
+
+func TestDryRunProblemsNamesAcceptedFailuresOnlyWithASetupRefusal(t *testing.T) {
+	scenarios := []ScenarioResult{
+		{Name: "First", Line: 2, Status: "failed", Phase: "assertion"},
+		{Name: "Seeded", Line: 5, Status: "failed", Phase: "setup", SetupFailure: "acceptance.feature line 6: Given a seeded fixture\nboom"},
+		{Name: "Prepared", Line: 8, Status: "failed", Phase: "setup"},
+		{Name: "Later", Line: 10, Status: "passed"},
+	}
+	eqSlice(t, "refusal", dryRunProblems(Acceptance{Status: 1, Scenarios: scenarios}), []string{
+		"setup failure: Seeded (line 5)\nacceptance.feature line 6: Given a seeded fixture\nboom",
+		"accepted assertion failure: First (line 2)",
+		"accepted setup failure: Prepared (line 8)",
+	})
+	if got := dryRunProblems(Acceptance{Status: 1, Scenarios: slices.Delete(slices.Clone(scenarios), 1, 2)}); len(got) != 0 {
+		t.Fatalf("accepted red alone is not a problem: %v", got)
 	}
 }

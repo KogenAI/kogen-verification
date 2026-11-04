@@ -136,7 +136,7 @@ func (r *Readiness) Cached(s *sys.Session, slug string) *Ready {
 		return nil
 	}
 	exit, ok := intValue(rec["acceptance_exit"])
-	if v, isInt := intValue(rec["version"]); !isInt || v != 4 || rec["outcome"] != "ready" || !ok {
+	if v, isInt := intValue(rec["version"]); !isInt || v != 5 || rec["outcome"] != "ready" || !ok {
 		return nil
 	}
 	if rec["sha256"] != in.sha || rec["head"] != in.head || rec["candidate_tree"] != in.tree || !jsonEqual(rec["baseline"], nonNil(in.baseline)) {
@@ -185,11 +185,22 @@ func (r *Readiness) Cached(s *sys.Session, slug string) *Ready {
 		if !valid {
 			return nil
 		}
+		phase, hasPhase := sm["phase"]
+		if status == "failed" {
+			p, _ := phase.(string)
+			if !slices.Contains([]string{"setup", "action", "assertion", "teardown"}, p) {
+				return nil
+			}
+		} else if hasPhase {
+			return nil
+		}
 		rest := shallowCopy(sm)
+		delete(rest, "phase")
 		delete(rest, "status")
 		delete(rest, "detail")
 		delete(rest, "unexercised_steps")
 		want := generic(ScenarioRecord(e)).(map[string]any)
+		delete(want, "phase")
 		delete(want, "status")
 		delete(want, "detail")
 		delete(want, "unexercised_steps")
@@ -198,6 +209,7 @@ func (r *Readiness) Cached(s *sys.Session, slug string) *Ready {
 		}
 		anyFailed = anyFailed || status == "failed"
 		result := withResult(e, status, detailPtr)
+		result.Phase, _ = phase.(string)
 		result.UnexercisedSteps = unexercised
 		scenarios = append(scenarios, result)
 	}
@@ -270,7 +282,7 @@ func (r *Readiness) RecordPass(s *sys.Session, slug string, ready *Ready) error 
 		return err
 	}
 	rec := map[string]any{
-		"version":         4,
+		"version":         5,
 		"candidate_tree":  ready.CandidateTree,
 		"outcome":         "ready",
 		"sha256":          ready.SHA256,
@@ -509,14 +521,21 @@ func dryRunProblems(acc Acceptance) []string {
 	}
 	dry := slices.Clone(acc.BindingProblems)
 	undefined := false
+	var setup, accepted []string
 	for _, s := range acc.Scenarios {
 		undefined = undefined || s.Status == "undefined"
-		if s.HarnessFailure != "" {
-			dry = append(dry, fmt.Sprintf("harness failure: %s (line %d)\n%s", s.Name, s.Line, s.HarnessFailure))
+		switch {
+		case s.SetupFailure != "":
+			setup = append(setup, fmt.Sprintf("setup failure: %s (line %d)\n%s", s.Name, s.Line, s.SetupFailure))
+		case s.Status == "failed" && s.Phase != "":
+			accepted = append(accepted, fmt.Sprintf("accepted %s failure: %s (line %d)", s.Phase, s.Name, s.Line))
 		}
 		if s.Status != "passed" && s.Status != "failed" && s.Status != "undefined" {
 			dry = append(dry, fmt.Sprintf("%s: %s (line %d)", s.Status, s.Name, s.Line))
 		}
+	}
+	if len(setup) > 0 {
+		dry = slices.Concat(dry, setup, accepted)
 	}
 	switch {
 	case len(reportProblems) > 0:
@@ -746,7 +765,11 @@ func Observations(slug string, ready *Ready, reference string) string {
 			if s.Detail != nil {
 				detail = *s.Detail
 			}
-			details = append(details, fmt.Sprintf("Scenario: %s (acceptance.feature line %d)\n%s", s.Name, s.Line, detail))
+			header := fmt.Sprintf("Scenario: %s (acceptance.feature line %d)", s.Name, s.Line)
+			if s.Phase != "" {
+				header += "\nFailure phase: " + s.Phase
+			}
+			details = append(details, header+"\n"+detail)
 		}
 	}
 	// Keep executed failure locations ahead of potentially long skipped-step lists.

@@ -255,11 +255,14 @@ func TestRealReadinessRefusesHarnessFailures(t *testing.T) {
 	for _, tc := range []struct{ name, feature, steps, location, message string }{
 		{"hook", "", `const {Before, Then} = require('@cucumber/cucumber');
 Before({name: 'shared fixture'}, () => { throw new TypeError('broken shared fixture'); });
-Then('the candidate succeeds', () => {});`, "shared fixture", "broken shared fixture"},
+Then('the candidate succeeds', () => {});`, "hook shared fixture: a hook at features/steps/fixture_steps.js line 2", "broken shared fixture"},
 		{"setup", "Feature: Fixture\n  Scenario: First\n    Given a fixture\n    Then the candidate succeeds\n  Scenario: Later\n    Given a fixture\n    Then the candidate succeeds\n", `const {Given, Then} = require('@cucumber/cucumber');
 function prepare() { throw new TypeError('broken setup helper'); }
 Given('a fixture', () => prepare());
-Then('the candidate succeeds', () => {});`, "Given a fixture", "broken setup helper"},
+Then('the candidate succeeds', () => {});`, "acceptance.feature line 3: Given a fixture", "broken setup helper"},
+		{"background", "Feature: Fixture\n  Background:\n    Given a fixture\n  Scenario: First\n    Then the candidate succeeds\n  Scenario: Later\n    Then the candidate succeeds\n", `const {Given, Then} = require('@cucumber/cucumber');
+Given('a fixture', () => { require('node:fs').readFileSync('fixtures/missing.json'); });
+Then('the candidate succeeds', () => {});`, "acceptance.feature line 3: Given a fixture", "ENOENT"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateTmp(t)
@@ -276,7 +279,7 @@ Then('the candidate succeeds', () => {});`, "Given a fixture", "broken setup hel
 			ready, err := r.Check(context.Background(), s, fixtureSlug)
 			e := failWith(t, err, "intent", "not_ready")
 			diagnostic := strings.Join(e.Lines, "\n")
-			for _, text := range []string{"First", "Later", tc.location, tc.message, "line"} {
+			for _, text := range []string{"setup failure: First (line", "setup failure: Later (line", tc.location, tc.message} {
 				contains(t, "diagnostic", diagnostic, text)
 			}
 			if ready != nil || r.Cached(s, fixtureSlug) != nil || fileExists(readinessPath(p.Root, fixtureSlug)) {
@@ -284,6 +287,37 @@ Then('the candidate succeeds', () => {});`, "Given a fixture", "broken setup hel
 			}
 		})
 	}
+}
+
+func TestRealReadinessAcceptsSetupFailureOfAMissingFunction(t *testing.T) {
+	isolateTmp(t)
+	p, tools := realProject(t, "")
+	p.write(project.FeaturePath(fixtureSlug), "Feature: Fixture\n  Scenario: First\n    Given a prepared product\n    Then the candidate succeeds\n  Scenario: Later\n    Given a ready product\n    When the product starts\n    Then the candidate succeeds\n  Scenario: Broken\n    Given a ready product\n    Then the candidate succeeds\n")
+	p.write("features/steps/fixture_steps.js", `const {Given, When, Then} = require('@cucumber/cucumber');
+const product = {};
+Given('a prepared product', () => { product.prepare(); });
+Given('a ready product', () => {});
+When('the product starts', () => { product.start(); });
+Then('the candidate succeeds', () => { throw new Error('not yet'); });`)
+	p.commit("missing function")
+	r := p.readiness()
+	r.Tools = tools
+	s, _ := p.session()
+	s.Env = p.Env
+	ready, err := r.Check(context.Background(), s, fixtureSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var phases []string
+	for _, sc := range ready.Scenarios {
+		phases = append(phases, sc.Phase)
+	}
+	eqSlice(t, "phases", phases, []string{"setup", "action", "assertion"})
+	obs := Observations(fixtureSlug, ready, "")
+	contains(t, "observations", obs, "Scenario: First (acceptance.feature line 2)\nFailure phase: setup\nacceptance.feature line 3: Given a prepared product\nTypeError: product.prepare is not a function")
+	contains(t, "observations", obs, "Scenario: Later (acceptance.feature line 5)\nFailure phase: action\n")
+	contains(t, "observations", obs, "Scenario: Broken (acceptance.feature line 9)\nFailure phase: assertion\n")
+	eq(t, "cached observations", Observations(fixtureSlug, r.Cached(s, fixtureSlug), ""), obs)
 }
 
 // ExUnit: release_behavior_test.exs, both generated runners with paths that hold spaces.

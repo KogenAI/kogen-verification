@@ -324,3 +324,83 @@ func TestAccountRejectsBrokenAssertionChains(t *testing.T) {
 		})
 	}
 }
+
+func TestAccountPhaseOfFailedScenarios(t *testing.T) {
+	dir := t.TempDir()
+	_, expected := featureWithSteps(t, "phased", 2)
+	missing := obj{"status": "FAILED", "message": "TypeError: product.prepare is not a function\n    at x", "exception": obj{"type": "TypeError", "message": "product.prepare is not a function\n    at x"}}
+	broken := obj{"status": "FAILED", "message": "TypeError: broken setup helper", "exception": obj{"type": "TypeError", "message": "broken setup helper"}}
+	multiline := obj{"status": "FAILED", "exception": obj{"type": "TypeError", "message": "bad thing\nx is not a function"}}
+	passed, skipped := obj{"status": "PASSED"}, obj{"status": "SKIPPED"}
+	for _, tc := range []struct {
+		name      string
+		types     [2]string
+		before    obj // result of a Before hook, nil for none
+		after     obj // result of an After hook, nil for none
+		steps     [2]obj
+		phase     string
+		unexplain bool
+	}{
+		{"Given", [2]string{"Context", "Outcome"}, nil, nil, [2]obj{broken, skipped}, "setup", true},
+		{"Given missing function", [2]string{"Context", "Outcome"}, nil, nil, [2]obj{missing, skipped}, "setup", false},
+		{"Given with a later line", [2]string{"Context", "Outcome"}, nil, nil, [2]obj{multiline, skipped}, "setup", true},
+		{"Before hook", [2]string{"Context", "Outcome"}, broken, nil, [2]obj{skipped, skipped}, "setup", true},
+		{"Before hook missing function", [2]string{"Context", "Outcome"}, missing, nil, [2]obj{skipped, skipped}, "setup", false},
+		{"When", [2]string{"Context", "Action"}, nil, nil, [2]obj{passed, missing}, "action", false},
+		{"Then", [2]string{"Context", "Outcome"}, nil, nil, [2]obj{passed, broken}, "assertion", false},
+		{"unknown step type", [2]string{"Context", "Unknown"}, nil, nil, [2]obj{passed, broken}, "assertion", false},
+		{"After hook", [2]string{"Context", "Outcome"}, nil, broken, [2]obj{passed, passed}, "teardown", false},
+		{"Given after a passed When", [2]string{"Action", "Context"}, nil, nil, [2]obj{passed, broken}, "setup", true},
+		{"first failed step wins", [2]string{"Context", "Outcome"}, nil, broken, [2]obj{passed, broken}, "assertion", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events := simpleMessages(testFeature, expected, reportOpts{results: statuses("PASSED", "PASSED")})
+			pickle := events[1]["pickle"].(obj)
+			for i, st := range pickle["steps"].([]any) {
+				st.(obj)["type"] = tc.types[i]
+			}
+			testCase := events[2]["testCase"].(obj)
+			testSteps := testCase["testSteps"].([]any)
+			finished := events[len(events)-1]
+			events = events[:len(events)-1]
+			for i, ts := range testSteps {
+				for j, e := range events {
+					if f, ok := e["testStepFinished"].(obj); ok && f["testStepId"] == ts.(obj)["id"] {
+						f["testStepResult"] = tc.steps[i]
+						events[j] = e
+					}
+				}
+			}
+			hook := func(id string, result obj) obj {
+				events = append(events, obj{"hook": obj{"id": "hk-" + id, "name": id}},
+					obj{"testStepFinished": obj{"testCaseStartedId": "case-1-1-started", "testStepId": id, "testStepResult": result}})
+				return obj{"id": id, "hookId": "hk-" + id}
+			}
+			if tc.before != nil {
+				testSteps = append([]any{hook("before", tc.before)}, testSteps...)
+			}
+			if tc.after != nil {
+				testSteps = append(testSteps, hook("after", tc.after))
+			}
+			testCase["testSteps"] = testSteps
+			events = append(events, finished)
+			got := account(dir, expected, writeReport(t, dir, "phase.ndjson", events), 1, "").Scenarios[0]
+			eq(t, "status", got.Status, "failed")
+			eq(t, "phase", got.Phase, tc.phase)
+			eq(t, "unexplained setup failure", got.SetupFailure != "", tc.unexplain)
+			if tc.name == "Before hook" {
+				contains(t, "hook failure", got.SetupFailure, "hook before: a hook (location not reported)\nTypeError: broken setup helper")
+			}
+		})
+	}
+	t.Run("not failed", func(t *testing.T) {
+		for _, results := range [][]string{{"PASSED", "PASSED"}, {"PASSED", "SKIPPED"}, {"PASSED", "PENDING"}, {"PASSED", "UNDEFINED"}} {
+			events := simpleMessages(testFeature, expected, reportOpts{results: statuses(results...)})
+			got := account(dir, expected, writeReport(t, dir, "nophase.ndjson", events), 1, "").Scenarios[0]
+			eq(t, "phase", got.Phase, "")
+			if strings.Contains(encode(got), `"phase"`) {
+				t.Fatalf("a %v scenario serializes a phase: %s", results, encode(got))
+			}
+		}
+	})
+}
