@@ -128,7 +128,8 @@ type Probe struct {
 	// is bound to; the result's InputChanges names those the command replaced, removed or
 	// re-moded in its copy, so final declared evidence cannot qualify other bytes.
 	Inputs map[string]string
-	Tools  Tools // KOGEN_NODE, KOGEN_QUINT and KOGEN_CUCUMBER for the command, when set
+	Log    Logger // receives the probe sweep event, when set
+	Tools  Tools  // KOGEN_NODE, KOGEN_QUINT and KOGEN_CUCUMBER for the command, when set
 }
 
 // ProbeFileError is the refusal of a probe whose files do not stay in the scratch copy.
@@ -193,10 +194,31 @@ func (pr Probe) Run(ctx context.Context, s *sys.Session) (ProbeResult, error) {
 	if err := s.Err(); err != nil {
 		return ProbeResult{}, err
 	}
+	runID, err := newAcceptanceRunID()
+	if err != nil {
+		return ProbeResult{}, err
+	}
+	markerFile, err := newAcceptanceMarkerFile()
+	if err != nil {
+		return ProbeResult{}, err
+	}
+	defer os.Remove(markerFile)
 	deadline, observer := probeDeadline, probeObserver
 	ps := sys.NewWith(probeEnv(s, scratch, home, runTmp, hexHome), scratch)
 	defer followInterrupt(s, ps)()
-	r, err := probeRun(ps, pr.Command, scratch, sys.Options{Context: ctx, Timeout: deadline, Env: pr.Tools.env(), KillGroupOnExit: true, RefuseForeignKill: true})
+	env := pr.Tools.env()
+	env[stepMarker] = runID
+	var r sys.Result
+	if rule, refused := sys.ForeignKill(pr.Command, ps.Owned); refused {
+		r = sys.Result{Status: 126, Output: sys.RefusalText(rule), Rule: rule}
+	} else {
+		script := acceptanceReaped(acceptanceScript(markerFile, pr.Command))
+		r, err = probeRun(ps, script, scratch, sys.Options{Context: ctx, Timeout: deadline, Env: env, KillGroupOnExit: true, RefuseForeignKill: true})
+	}
+	wall := math.Round(time.Since(t0).Seconds()*10) / 10
+	if r.Rule == "" {
+		logSweep(pr.Log, "probe", stepMarker, runID, markerFile)
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		if ie := s.Err(); ie != nil {
 			return ProbeResult{}, ie
@@ -208,7 +230,6 @@ func (pr Probe) Run(ctx context.Context, s *sys.Session) (ProbeResult, error) {
 	if err != nil {
 		return ProbeResult{}, err
 	}
-	wall := math.Round(time.Since(t0).Seconds()*10) / 10
 	var changes []string
 	for p, hash := range pr.Inputs {
 		if st := before[p]; !st.ok || st.hash != hash || probeInput(scratch, p) != st {

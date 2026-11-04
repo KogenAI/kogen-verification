@@ -380,11 +380,11 @@ func (r *Readiness) checkClean(ctx context.Context, s *sys.Session, dir, slug st
 	var proof []Obligation
 	if declarations, _ := Declarations(intent); len(declarations) > 0 {
 		err = r.Attempt.Observe("feasibility", "feasibility", func() (err error) {
-			proof, err = execute(ctx, s, r.Tools, dir, intent, r.Root, r.Evidence, r.BoundShapeAcceptance)
+			proof, err = execute(ctx, s, r.Tools, dir, intent, r.Root, r.Evidence, r.BoundShapeAcceptance, r.Log)
 			return err
 		})
 	} else {
-		proof, err = execute(ctx, s, r.Tools, dir, intent, r.Root, r.Evidence, r.BoundShapeAcceptance)
+		proof, err = execute(ctx, s, r.Tools, dir, intent, r.Root, r.Evidence, r.BoundShapeAcceptance, r.Log)
 	}
 	if err != nil {
 		return nil, err

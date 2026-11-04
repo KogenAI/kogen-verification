@@ -269,10 +269,10 @@ func jsonEqual(a, b any) bool { return encode(a) == encode(b) }
 // return the obligations; any mismatch is intent/not_ready "declared feasibility evidence
 // failed" with the expected and actual outcome of each unmet check, bounded to 16 KiB.
 func Execute(ctx context.Context, s *sys.Session, tools Tools, root string, intent *project.Intent, evidenceRoot string, ev Evidence) ([]Obligation, error) {
-	return execute(ctx, s, tools, root, intent, evidenceRoot, ev, false)
+	return execute(ctx, s, tools, root, intent, evidenceRoot, ev, false, nil)
 }
 
-func execute(ctx context.Context, s *sys.Session, tools Tools, root string, intent *project.Intent, evidenceRoot string, ev Evidence, shape bool) ([]Obligation, error) {
+func execute(ctx context.Context, s *sys.Session, tools Tools, root string, intent *project.Intent, evidenceRoot string, ev Evidence, shape bool, log Logger) ([]Obligation, error) {
 	ds, err := Declarations(intent)
 	if err != nil {
 		return nil, err
@@ -293,7 +293,7 @@ func execute(ctx context.Context, s *sys.Session, tools Tools, root string, inte
 		id.Checks = []CheckResult{}
 		for _, c := range d.Checks {
 			r, err := probed(ev, func() (ProbeResult, error) {
-				return Probe{Root: root, Command: c.Command, Inputs: bound, Tools: tools}.Run(ctx, s)
+				return Probe{Root: root, Command: c.Command, Inputs: bound, Tools: tools, Log: log}.Run(ctx, s)
 			})
 			if err != nil {
 				return nil, err

@@ -168,6 +168,11 @@ func runStepAs(ctx context.Context, s *sys.Session, tools Tools, name string, l 
 			res, err = sys.Result{}, ie
 		}
 	}
+	logSweep(l, name, markerVar, runID, markerFile)
+	return res, err
+}
+
+func logSweep(l Logger, name, markerVar, runID, markerFile string) {
 	began := time.Now()
 	stopped, sweepErr := stopMarkedProcesses(markerVar, runID, markerFile)
 	event := map[string]any{"event": "step_sweep", "name": name, "stopped": stopped, "ms": int(time.Since(began).Milliseconds())}
@@ -175,5 +180,4 @@ func runStepAs(ctx context.Context, s *sys.Session, tools Tools, name string, l 
 		event["error"] = Cut(sweepErr.Error())
 	}
 	logEvent(l, event)
-	return res, err
 }

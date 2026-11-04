@@ -164,10 +164,22 @@ func TestReadinessRunsDeclaredEvidenceAndRecordsItsProof(t *testing.T) {
 	p.setFeasibility(capability("route", "cat route.cjs", 0, "route bytes\n", "route.cjs"))
 	p.commit("evidence")
 	r := p.readiness()
+	log := &memLog{}
+	r.Log = log
 	s, _ := p.session()
 	ready, err := r.Check(context.Background(), s, fixtureSlug)
 	if err != nil {
 		t.Fatal(err)
+	}
+	events := log.named("step_sweep")
+	probes := 0
+	for _, event := range events {
+		if event["name"] == "probe" {
+			probes++
+		}
+	}
+	if probes != 1 {
+		t.Fatalf("probe sweep events: %+v", events)
 	}
 	eq(t, "obligations", len(ready.Feasibility), 1)
 	rec, _ := p.readinessRecord()
