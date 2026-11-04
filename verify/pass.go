@@ -67,6 +67,9 @@ func (m *MaintainedFeatureResult) UnmarshalJSON(data []byte) error {
 // object, `model` is `"none"`, `"not_run"`, `{"ok":[]}` or `{"failed":[...]}`, and `not_run`
 // names the required items an earlier failure kept from running.
 type Pass struct {
+	dependencyReordered      bool
+	ExecutionOrder           []string
+	PulledForward            []string
 	UncoveredAcceptance      []string
 	UncoveredAcceptanceCount *int
 	N                        int
@@ -91,6 +94,8 @@ type Pass struct {
 }
 
 type passJSON struct {
+	ExecutionOrder           *[]string                 `json:"execution_order,omitempty"`
+	PulledForward            *[]string                 `json:"pulled_forward,omitempty"`
 	UncoveredAcceptance      *[]string                 `json:"uncovered_acceptance,omitempty"`
 	UncoveredAcceptanceCount *int                      `json:"uncovered_acceptance_count,omitempty"`
 	N                        int                       `json:"n"`
@@ -121,6 +126,9 @@ func nonNil[T any](s []T) []T {
 func (p Pass) MarshalJSON() ([]byte, error) {
 	j := passJSON{N: p.N, Clean: p.Clean, Green: p.Green, Tree: p.Tree, Checks: nonNil(p.Checks),
 		Speculative: p.Speculative, Cancelled: p.Cancelled, Moved: nonNil(p.Moved), Failing: nonNil(p.Failing), MaintainedModels: p.MaintainedModels, MaintainedFeatures: p.MaintainedFeatures}
+	if p.PulledForward != nil {
+		j.ExecutionOrder, j.PulledForward = &p.ExecutionOrder, &p.PulledForward
+	}
 	if p.UncoveredAcceptanceCount != nil {
 		j.UncoveredAcceptance = &p.UncoveredAcceptance
 		j.UncoveredAcceptanceCount = p.UncoveredAcceptanceCount
@@ -161,6 +169,8 @@ func (p *Pass) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	var j struct {
+		ExecutionOrder           []string                  `json:"execution_order"`
+		PulledForward            []string                  `json:"pulled_forward"`
 		UncoveredAcceptance      []string                  `json:"uncovered_acceptance"`
 		UncoveredAcceptanceCount *int                      `json:"uncovered_acceptance_count"`
 		N                        int                       `json:"n"`
@@ -182,7 +192,7 @@ func (p *Pass) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &j); err != nil {
 		return err
 	}
-	*p = Pass{N: j.N, Clean: j.Clean, Green: j.Green, Tree: j.Tree, Setup: j.Setup, Checks: j.Checks,
+	*p = Pass{ExecutionOrder: j.ExecutionOrder, PulledForward: j.PulledForward, N: j.N, Clean: j.Clean, Green: j.Green, Tree: j.Tree, Setup: j.Setup, Checks: j.Checks,
 		Speculative: j.Speculative, Cancelled: j.Cancelled, NotRun: j.NotRun, Moved: j.Moved, Failing: j.Failing, MaintainedModels: j.MaintainedModels, MaintainedFeatures: j.MaintainedFeatures}
 	p.UncoveredAcceptance, p.UncoveredAcceptanceCount = j.UncoveredAcceptance, j.UncoveredAcceptanceCount
 	_, hasSetup := present["setup"]
@@ -258,8 +268,43 @@ func (p Pass) Complete(cfg *project.Config, expected []project.Scenario, model *
 	if len(p.Checks) != len(cfg.Checks) {
 		return false
 	}
-	for i, c := range cfg.Checks {
-		if got := p.Checks[i]; got.Name != c.Name || got.Command != c.Run || got.Status != 0 {
+	if len(p.ExecutionOrder) == 0 && !p.dependencyReordered {
+		for i, c := range cfg.Checks {
+			got := p.Checks[i]
+			if got.Name != c.Name || got.Command != c.Run || got.Status != 0 {
+				return false
+			}
+		}
+	} else if len(p.ExecutionOrder) != 0 {
+		var names []string
+		for _, name := range p.ExecutionOrder {
+			for _, c := range cfg.Checks {
+				if name == c.Name {
+					names = append(names, name)
+					break
+				}
+			}
+		}
+		if len(names) != len(p.Checks) {
+			return false
+		}
+		for i, c := range p.Checks {
+			if c.Name != names[i] {
+				return false
+			}
+		}
+	}
+	used := make([]bool, len(p.Checks))
+	for _, c := range cfg.Checks {
+		found := false
+		for i, got := range p.Checks {
+			if !used[i] && got.Name == c.Name && got.Command == c.Run && got.Status == 0 {
+				used[i] = true
+				found = true
+				break
+			}
+		}
+		if !found {
 			return false
 		}
 	}

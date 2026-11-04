@@ -1,0 +1,11 @@
+{
+  "None": false,
+  "Path": ".kogen/models/k-verify-previously-red-first/model.qnt",
+  "Invariants": [
+    "Complete",
+    "Prerequisite"
+  ],
+  "Seed": "17",
+  "Samples": "100",
+  "Steps": "20"
+}

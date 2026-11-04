@@ -15,6 +15,8 @@ import (
 
 // Input is everything one verification pass needs.
 type Input struct {
+	PreviousRed        []string
+	Dependencies       map[string][]string
 	Root               string              // the user's checkout
 	Repo               *git.Repo           // Git at Root; nil: git.New(Root, session env)
 	Config             *project.Config     // the project's commands
@@ -152,6 +154,10 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 		}
 	}
 
+	ordinary, _ := schedule(items, nil, in.Dependencies)
+	items, pulled := schedule(items, in.PreviousRed, in.Dependencies)
+	effective := !slices.EqualFunc(items, ordinary, func(a, b item) bool { return a.name == b.name })
+
 	reportDir, err := os.MkdirTemp("", "kogen-check-reports-")
 	if err != nil {
 		return Pass{}, err
@@ -163,7 +169,10 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 		}
 	}
 	executed := map[string]bool{}
-	p := Pass{N: in.N, Tree: before, Clean: true, Model: ModelNotRun, NotRun: []string{}, Setup: []CommandResult{}, Checks: []CommandResult{}}
+	p := Pass{N: in.N, Tree: before, Clean: true, Model: ModelNotRun, NotRun: []string{}, Setup: []CommandResult{}, Checks: []CommandResult{}, dependencyReordered: len(in.Dependencies) > 0}
+	if effective {
+		p.PulledForward = nonNil(pulled)
+	}
 	if in.Stage == nil {
 		for _, m := range in.MaintainedModels {
 			p.MaintainedModels = append(p.MaintainedModels, MaintainedModelResult{Path: m.Path, Result: ModelNotRun})
@@ -194,15 +203,13 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 			p.UncoveredAcceptanceCount = new(int)
 		}
 		red := false
-		maintainedIndex := 0
-		featureIndex := 0
 		for index := 0; index < len(items); index++ {
 			it := items[index]
 			if red {
 				p.NotRun = append(p.NotRun, it.name)
 				continue
 			}
-			if in.Stage == nil && it.kind == "check" && independentGo(it.command, s) && attemptFrom(ctx) == nil {
+			if !effective && len(in.Dependencies) == 0 && in.Stage == nil && it.kind == "check" && independentGo(it.command, s) && attemptFrom(ctx) == nil {
 				end := index + 1
 				for end < len(items) && items[end].kind == "check" && independentGo(items[end].command, s) {
 					end++
@@ -233,6 +240,9 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 					continue
 				}
 			}
+			if effective {
+				p.ExecutionOrder = append(p.ExecutionOrder, it.name)
+			}
 			switch it.kind {
 			case "acceptance":
 				a, err := RunAcceptance(ctx, s, scratch, in.Tools, in.Intent.Slug, in.acceptanceRun(), report, in.Evidence, in.Log)
@@ -245,6 +255,7 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 				p.Acceptance = &a
 				red = len(a.Problems) > 0
 			case "feature":
+				featureIndex := slices.Index(in.MaintainedFeatures, it.name)
 				featureReport := fmt.Sprintf("%s-feature-%d.ndjson", report, featureIndex+1)
 				os.Remove(featureReport)
 				a, err := runFeature(ctx, s, scratch, in.Tools, it.name, in.acceptanceRun(), featureReport, in.Evidence, in.Log, true)
@@ -255,9 +266,9 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 					acceptanceCoverage(scratch, featureReport, executed)
 				}
 				p.MaintainedFeatures[featureIndex].Result = &a
-				featureIndex++
 				red = len(a.Problems) > 0
 			case "maintained":
+				maintainedIndex := slices.IndexFunc(in.MaintainedModels, func(m project.ModelSpec) bool { return m.Path == it.name })
 				m, err := CheckModel(ctx, s, scratch, in.Tools, &in.MaintainedModels[maintainedIndex], in.Evidence, in.Log)
 				if err != nil {
 					return nil, false, err
@@ -266,7 +277,6 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 					m.Problems[i] = strings.Replace(problem, "model.qnt:", it.name+":", 1)
 				}
 				p.MaintainedModels[maintainedIndex].Result = m
-				maintainedIndex++
 				red = m.Failed()
 			case "model":
 				m, err := CheckModel(ctx, s, scratch, in.Tools, model, in.Evidence, in.Log)
@@ -351,8 +361,13 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 	}
 	p.Green = !red && len(p.NotRun) == 0 && len(p.Failing) == 0 && len(p.Moved) == 0
 	s.Progress(p.Summary())
-	logEvent(in.Log, map[string]any{"event": "pass", "pass": in.N, "green": p.Green, "failing": p.Failing,
-		"not_run": p.NotRun, "files_changed_while_checks_ran": p.Moved})
+	event := map[string]any{"event": "pass", "pass": in.N, "green": p.Green, "failing": p.Failing,
+		"not_run": p.NotRun, "files_changed_while_checks_ran": p.Moved}
+	if effective {
+		event["execution_order"] = p.ExecutionOrder
+		event["pulled_forward"] = p.PulledForward
+	}
+	logEvent(in.Log, event)
 	return p, nil
 }
 
