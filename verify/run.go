@@ -2,6 +2,7 @@ package verify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -461,6 +462,10 @@ func runFeature(ctx context.Context, s *sys.Session, root string, tools Tools, f
 		logEvent(log, map[string]any{"event": "command_result", "name": "acceptance", "status": r.Status, "output": Cap(r.Output), "wall_ms": timing.wallMS})
 	}
 	if err != nil {
+		var timeout *stepTimeout
+		if errors.As(err, &timeout) {
+			timeout.stepTimes = readStepTimes(report, timeout.step.EndedAt)
+		}
 		return Acceptance{}, err
 	}
 	return Account(root, feature, expected, report, r.Status, r.Output), nil

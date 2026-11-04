@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -86,10 +87,22 @@ func TestAttemptUnknownTimeoutOutput(t *testing.T) {
 				st.Output = Cap(a.Redact("partial-marker secret-value " + strings.Repeat("x", 2<<20)))
 			}
 			a.add(st, a.started, time.Now())
-			err := a.Refuse(&stepTimeout{step: st, unknown: true})
+			timeout := &stepTimeout{step: st, unknown: true}
+			wantTimes := []string{"Its Cucumber report recorded no step times before the stop."}
+			if partial {
+				timeout.stepTimes = []timedEntry{{label: "acceptance.feature line 3: Given secret-value", wall: 2500 * time.Millisecond, running: true}}
+				wantTimes = []string{"Slowest Cucumber steps before the stop (from its report, slowest first):", "  2.5s, still running when stopped: acceptance.feature line 3: Given " + Redacted}
+			}
+			err := a.Refuse(timeout)
 			e, ok := sys.AsError(err)
 			if !ok || e.Class != "environment" || e.Reason != "step_timeout" {
 				t.Fatalf("refusal: %v", err)
+			}
+			// Even when the group could not be observed to end, the report's step times come right
+			// before the steps that ran.
+			ran := slices.IndexFunc(e.Lines, func(l string) bool { return strings.HasPrefix(l, "Steps that ran, with wall time") })
+			if ran < len(wantTimes) || !slices.Equal(e.Lines[ran-len(wantTimes):ran], wantTimes) {
+				t.Fatalf("step time lines = %q, want %q right before the steps that ran", e.Lines, wantTimes)
 			}
 			text := e.Render()
 			if !strings.Contains(text, "Its output could not be read.") || strings.Contains(text, "It wrote no output") || strings.Contains(text, "secret-value") {

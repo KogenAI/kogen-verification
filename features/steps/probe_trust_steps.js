@@ -1,9 +1,9 @@
 // Steps of the probe trust scenarios: a synthetic project whose tool configuration a fake
 // tool manager trusts only at the project's real location, run directly and as verify probes
 // through the harness features/steps/probetrust.go.
-const { Before, After, BeforeAll, AfterAll, Given, When, Then, setDefaultTimeout } = require('@cucumber/cucumber');
+const { Before, After, AfterAll, Given, When, Then, setDefaultTimeout } = require('@cucumber/cucumber');
 const assert = require('node:assert/strict');
-const { spawnSync } = require('node:child_process');
+const { spawnSync, execFile } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -41,13 +41,28 @@ sed -n 's/^greeting = "\\(.*\\)"$/\\1/p' "$config"
 
 let harness;
 let harnessDir;
+let harnessBuild;
 
-BeforeAll(function () {
-  harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), 'probetrust-harness-'));
-  harness = path.join(harnessDir, 'probetrust');
-  const built = spawnSync('go', ['build', '-o', harness, './features/steps'], { encoding: 'utf8' });
-  assert.equal(built.status, 0, `go build ./features/steps (probetrust.go) failed: ${built.stdout}${built.stderr}`);
-});
+// buildHarness builds the harness the first time a step needs it and reuses it for the rest
+// of the run. The go command runs asynchronously so that Cucumber's report keeps the times of
+// finished steps when a run is stopped.
+function buildHarness() {
+  if (!harnessBuild) {
+    harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), 'probetrust-harness-'));
+    const out = path.join(harnessDir, 'probetrust');
+    harnessBuild = new Promise((resolve, reject) => {
+      execFile('go', ['build', '-o', out, './features/steps'], { encoding: 'utf8' }, (error, stdout, stderr) => {
+        if (error) {
+          reject(new assert.AssertionError({ message: `go build ./features/steps (probetrust.go) failed: ${stdout}${stderr}`, actual: error.code, expected: 0, operator: 'strictEqual' }));
+        } else {
+          harness = out;
+          resolve(out);
+        }
+      });
+    });
+  }
+  return harnessBuild;
+}
 
 AfterAll(function () {
   if (harnessDir) fs.rmSync(harnessDir, { recursive: true, force: true });
@@ -92,7 +107,8 @@ When('the control {string} runs in a copy of the project elsewhere with the call
   runIn(this, command, copy);
 });
 
-When('the control {string} runs as a probe of the project', function (command) {
+When('the control {string} runs as a probe of the project', async function (command) {
+  await buildHarness();
   const r = spawnSync(harness, ['probe', this.root, command], { env: this.env, encoding: 'utf8' });
   assert.equal(r.status, 0, `probetrust probe ${this.root} ${command} failed: exit ${r.status}: ${r.stdout}${r.stderr}`);
   const got = JSON.parse(r.stdout);
@@ -100,7 +116,8 @@ When('the control {string} runs as a probe of the project', function (command) {
   this.result = { where: `probe of ${command}`, status: got.status, output: got.output };
 });
 
-When('the control {string} runs as a probe of the project from a copy of the project elsewhere', function (command) {
+When('the control {string} runs as a probe of the project from a copy of the project elsewhere', async function (command) {
+  await buildHarness();
   const copy = path.join(this.tmp('probetrust-elsewhere-'), 'project');
   fs.cpSync(this.root, copy, { recursive: true });
   const r = spawnSync(harness, ['probe', this.root, `cd '${copy}' && ${command}`], { env: this.env, encoding: 'utf8' });
@@ -110,8 +127,9 @@ When('the control {string} runs as a probe of the project from a copy of the pro
   this.result = { where: `probe of ${command} in ${copy}`, status: got.status, output: got.output };
 });
 
-When('the declared observer {string} whose good control {string} expects exit {int} and the output line {string} is executed for the project', function (id, command, exit, line) {
+When('the declared observer {string} whose good control {string} expects exit {int} and the output line {string} is executed for the project', async function (id, command, exit, line) {
   assert.equal(exit, 0, 'an observer good check expects exit 0');
+  await buildHarness();
   const r = spawnSync(harness, ['execute', this.root, id, command, `${line}\n`], { env: this.env, encoding: 'utf8' });
   assert.equal(r.status, 0, `probetrust execute failed: exit ${r.status}: ${r.stdout}${r.stderr}`);
   this.refusal = r.stdout;

@@ -39,6 +39,10 @@ Use it after a deliberate change to a recorded output, or to settle a merge or c
 
 The flag rewrites only recorded outputs that differ, and only those values: every other byte of the file stays as recorded. It never rewrites recorded inputs or historical records (for example `record_text` in `readiness.json` and the legacy `pass` records in `passes.json`), and it must not be used to silence an unexplained failure. The flag exists only in the tests of package `verify`; no program has it.
 
+### Acceptance steps
+
+Kogen's approval runs an Intent's acceptance with only that Intent's feature file, but Cucumber still loads every step file in `features/steps`, and the run has the fixed 120-second step limit. Step code therefore does no work when it is loaded or in hooks that run for every feature. A step that needs a Go program or test binary builds it once per run, on first use, and later scenarios reuse it instead of running `go build`, `go run` or `go test` again. Child processes are started asynchronously (not with `spawnSync` or `execFileSync`), so that Cucumber's report keeps the times of finished steps when a run is stopped.
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

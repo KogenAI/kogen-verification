@@ -146,6 +146,8 @@ type stepTimeout struct {
 	step *AttemptStep
 	// unknown: the group's disappearance could not be observed after the stop.
 	unknown bool
+	// stepTimes are the slowest Cucumber steps of a timed-out acceptance step's report.
+	stepTimes []timedEntry
 }
 
 func (e *stepTimeout) Error() string { return "step " + e.step.Name + " timed out" }
@@ -329,6 +331,9 @@ func (a *Attempt) Refuse(err error) error {
 			lines = append(lines, strings.Split(Diagnostic(out), "\n")...)
 		} else if !failing.OutputUnavailable {
 			lines = append(lines, "It wrote no output before it was stopped.")
+		}
+		if failing.Name == "acceptance" {
+			lines = append(lines, stepTimeLines(timeout.stepTimes)...)
 		}
 	}
 	lines = append(lines, "Steps that ran, with wall time (each step has its own "+fmt.Sprintf("%ds", int(a.timeout/time.Second))+" limit):")
