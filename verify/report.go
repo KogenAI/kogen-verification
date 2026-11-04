@@ -40,6 +40,7 @@ type ScenarioResult struct {
 	// RunnerObserver is the runner-observer analysis of the failing step's message (see
 	// runnerObserver), "" when it has none. It is never serialized.
 	RunnerObserver string `json:"-"`
+	HarnessFailure string `json:"-"`
 }
 
 // ScenarioRecord is the scenario as the readiness record holds it, without a result: the
@@ -120,6 +121,7 @@ func Account(root, feature string, expected []project.Scenario, report string, s
 				r.UnexercisedSteps = hits[0].unexercised
 				r.Unwritten = hits[0].unwritten
 				r.RunnerObserver = hits[0].runnerObserver
+				r.HarnessFailure = hits[0].harnessFailure
 				named = hits[0].named
 			}
 		default:
@@ -185,6 +187,7 @@ type reportCase struct {
 	unwritten   []string
 	// runnerObserver is the failed step's runner-observer result, "" when it has none.
 	runnerObserver string
+	harnessFailure string
 }
 
 type jmap = map[string]any
@@ -390,6 +393,7 @@ func accountCases(root string, msgs []jmap) []reportCase {
 		}
 		c.binding = bindingProblems(tc, pickle, mine, lines)
 		if complete && status == "failed" {
+			c.harnessFailure = harnessFailure(tc, pickle, mine, lines, hooks)
 			c.named, c.unwritten = missingNamedTests(tc, mine, defs)
 			if _, bad := worstStep(mine); bad != nil {
 				c.runnerObserver = runnerObserver(failureMessage(bad))
@@ -398,6 +402,52 @@ func accountCases(root string, msgs []jmap) []reportCase {
 		out = append(out, c)
 	}
 	return out
+}
+
+// harnessFailure uses Cucumber's test-step identity and Gherkin step type, not
+// exception names or stack frames. A Context step preceding an action or
+// outcome is fixture setup; an unclassified step remains product red.
+func harnessFailure(tc, pickle jmap, results []stepResult, lines map[string]astNode, hooks map[string]any) string {
+	steps := list(get(pickle, "steps"))
+	operated := false
+	for _, ts := range list(get(tc, "testSteps")) {
+		var result any
+		for _, r := range results {
+			if get(ts, "id") == r.step {
+				result = r.result
+				break
+			}
+		}
+		status := str0(get(result, "status"))
+		if hookID := get(ts, "hookId"); hookID != nil {
+			if status == "FAILED" && !operated {
+				detail := stepDetail(tc, pickle, str(get(ts, "id")), result, lines, hooks)
+				if name := str0(get(hooks[str(hookID)], "name")); name != "" {
+					detail = "hook " + name + ": " + detail
+				}
+				return detail
+			}
+			continue
+		}
+		for i, ps := range steps {
+			if get(ps, "id") != get(ts, "pickleStepId") {
+				continue
+			}
+			kind := str0(get(ps, "type"))
+			if status == "FAILED" && !operated && kind == "Context" {
+				for _, later := range steps[i+1:] {
+					if get(later, "type") == "Action" || get(later, "type") == "Outcome" {
+						return stepDetail(tc, pickle, str(get(ts, "id")), result, lines, hooks)
+					}
+				}
+			}
+			if (kind == "Action" || kind == "Outcome") && status != "SKIPPED" {
+				operated = true
+			}
+			break
+		}
+	}
+	return ""
 }
 
 func countResults(results []stepResult, id string) int {

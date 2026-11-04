@@ -136,7 +136,7 @@ func (r *Readiness) Cached(s *sys.Session, slug string) *Ready {
 		return nil
 	}
 	exit, ok := intValue(rec["acceptance_exit"])
-	if v, isInt := intValue(rec["version"]); !isInt || v != 3 || rec["outcome"] != "ready" || !ok {
+	if v, isInt := intValue(rec["version"]); !isInt || v != 4 || rec["outcome"] != "ready" || !ok {
 		return nil
 	}
 	if rec["sha256"] != in.sha || rec["head"] != in.head || rec["candidate_tree"] != in.tree || !jsonEqual(rec["baseline"], nonNil(in.baseline)) {
@@ -270,7 +270,7 @@ func (r *Readiness) RecordPass(s *sys.Session, slug string, ready *Ready) error 
 		return err
 	}
 	rec := map[string]any{
-		"version":         3,
+		"version":         4,
 		"candidate_tree":  ready.CandidateTree,
 		"outcome":         "ready",
 		"sha256":          ready.SHA256,
@@ -511,6 +511,9 @@ func dryRunProblems(acc Acceptance) []string {
 	undefined := false
 	for _, s := range acc.Scenarios {
 		undefined = undefined || s.Status == "undefined"
+		if s.HarnessFailure != "" {
+			dry = append(dry, fmt.Sprintf("harness failure: %s (line %d)\n%s", s.Name, s.Line, s.HarnessFailure))
+		}
 		if s.Status != "passed" && s.Status != "failed" && s.Status != "undefined" {
 			dry = append(dry, fmt.Sprintf("%s: %s (line %d)", s.Status, s.Name, s.Line))
 		}

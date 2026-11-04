@@ -218,13 +218,13 @@ func TestRealReadinessChecksTheModelWithQuintAndRecordsItsOutcome(t *testing.T) 
 	eq(t, "detail", e.Detail, "node is not available at "+filepath.Join(p.Aux, "no-node")+"; reinstall Kogen")
 }
 
-// ExUnit: readiness_observations_test.exs, hook locations and explicit UTF-8 truncation.
-func TestRealHookLocationsAndExplicitUTF8TruncationReachTheObservations(t *testing.T) {
+func TestRealProductRedTruncationReachesObservations(t *testing.T) {
 	isolateTmp(t)
 	p, tools := realProject(t, "")
 	message, _ := json.Marshal(strings.Repeat("é", 11000))
-	p.write("features/steps/fixture_steps.js", realSteps+"\nconst { Before } = require('@cucumber/cucumber');\nBefore(function () { throw new Error("+string(message)+"); });\n")
-	p.commit("hook")
+	p.write("features/steps/fixture_steps.js", "const {Then} = require('@cucumber/cucumber');\nThen('the candidate succeeds', () => { throw new Error("+string(message)+"); });\n")
+	p.write(project.FeaturePath(fixtureSlug), "Feature: Fixture\n  Scenario: First\n    Then the candidate succeeds\n    Then the candidate succeeds\n  Scenario: Later\n    Then the candidate succeeds\n    Then the candidate succeeds\n")
+	p.commit("long red")
 	r := p.readiness()
 	r.Tools = tools
 	s, _ := p.session()
@@ -234,22 +234,56 @@ func TestRealHookLocationsAndExplicitUTF8TruncationReachTheObservations(t *testi
 		t.Fatal(err)
 	}
 	if !ready.Failures() {
-		t.Fatal("a failing hook is accounted red")
+		t.Fatal("product failure must be red")
 	}
 	obs := Observations(fixtureSlug, ready, "")
 	if !utf8.ValidString(obs) || len(obs) > 16384 {
-		t.Fatalf("observations: %d bytes, valid %v", len(obs), utf8.ValidString(obs))
+		t.Fatalf("observations: %d bytes", len(obs))
 	}
-	contains(t, "observations", obs, "a hook at features/steps/fixture_steps.js line ")
 	contains(t, "observations", obs, "bytes omitted")
-	contains(t, "summary survives long details", obs, "Unexercised acceptance steps: 2")
-	contains(t, "notice survives long details", obs, "Skipped steps are unexercised; readiness does not prove their behavior or fixture validity.")
+	contains(t, "summary", obs, "Unexercised acceptance steps: 2")
+	contains(t, "notice", obs, "Skipped steps are unexercised; readiness does not prove their behavior or fixture validity.")
 	ack := Acknowledgment(fixtureSlug, ready, "")
 	if !utf8.ValidString(ack) || len(ack) > 16384 {
 		t.Fatalf("acknowledgment: %d bytes", len(ack))
 	}
-	contains(t, "acknowledgment", ack, "a hook at")
-	eq(t, "the same card on a later request", Observations(fixtureSlug, r.Cached(s, fixtureSlug), ""), obs)
+	contains(t, "acknowledgment", ack, "acceptance.feature line")
+	eq(t, "cached observations", Observations(fixtureSlug, r.Cached(s, fixtureSlug), ""), obs)
+}
+
+func TestRealReadinessRefusesHarnessFailures(t *testing.T) {
+	for _, tc := range []struct{ name, feature, steps, location, message string }{
+		{"hook", "", `const {Before, Then} = require('@cucumber/cucumber');
+Before({name: 'shared fixture'}, () => { throw new TypeError('broken shared fixture'); });
+Then('the candidate succeeds', () => {});`, "shared fixture", "broken shared fixture"},
+		{"setup", "Feature: Fixture\n  Scenario: First\n    Given a fixture\n    Then the candidate succeeds\n  Scenario: Later\n    Given a fixture\n    Then the candidate succeeds\n", `const {Given, Then} = require('@cucumber/cucumber');
+function prepare() { throw new TypeError('broken setup helper'); }
+Given('a fixture', () => prepare());
+Then('the candidate succeeds', () => {});`, "Given a fixture", "broken setup helper"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateTmp(t)
+			p, tools := realProject(t, "")
+			if tc.feature != "" {
+				p.write(project.FeaturePath(fixtureSlug), tc.feature)
+			}
+			p.write("features/steps/fixture_steps.js", tc.steps)
+			p.commit("broken harness")
+			r := p.readiness()
+			r.Tools = tools
+			s, _ := p.session()
+			s.Env = p.Env
+			ready, err := r.Check(context.Background(), s, fixtureSlug)
+			e := failWith(t, err, "intent", "not_ready")
+			diagnostic := strings.Join(e.Lines, "\n")
+			for _, text := range []string{"First", "Later", tc.location, tc.message, "line"} {
+				contains(t, "diagnostic", diagnostic, text)
+			}
+			if ready != nil || r.Cached(s, fixtureSlug) != nil || fileExists(readinessPath(p.Root, fixtureSlug)) {
+				t.Fatal("harness failure published evidence")
+			}
+		})
+	}
 }
 
 // ExUnit: release_behavior_test.exs, both generated runners with paths that hold spaces.
@@ -311,12 +345,14 @@ Then('final {word}', function (value) {});
 	eq(t, "exact retained", Observations(fixtureSlug, r.Cached(s, fixtureSlug), ""), obs)
 	// A Before failure skips even the Background, but never records the hook itself.
 	p.write("features/steps/fixture_steps.js", string(must(os.ReadFile(filepath.Join(p.Root, "features/steps/fixture_steps.js"))))+"\nrequire('@cucumber/cucumber').Before(function () { throw new Error('hook-red'); });\n")
-	ready, err = r.Check(context.Background(), s, fixtureSlug)
+	_, err = r.Check(context.Background(), s, fixtureSlug)
+	e := failWith(t, err, "intent", "not_ready")
+	contains(t, "hook refusal", strings.Join(e.Lines, "\n"), "hook-red")
+	acc, err := RunAcceptance(context.Background(), s, p.Root, tools, fixtureSlug, p.Config.Acceptance.Run, filepath.Join(p.Aux, "hook-report.ndjson"), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	contains(t, "count every Examples instance", Observations(fixtureSlug, ready, ""), "Unexercised acceptance steps: 8")
-	for _, sc := range ready.Scenarios {
+	for _, sc := range acc.Scenarios {
 		eq(t, "background and all scenario steps", len(sc.UnexercisedSteps), 4)
 		eq(t, "background source", encode(sc.UnexercisedSteps[0]), encode(StepRecord{Keyword: "Given ", Text: "background runs", Line: 3}))
 		contains(t, "hook failure", *sc.Detail, "hook-red")
