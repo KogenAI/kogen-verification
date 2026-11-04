@@ -84,11 +84,15 @@ func CheckModel(ctx context.Context, s *sys.Session, dir string, tools Tools, m 
 		if st.invariant != "" {
 			name += "-" + st.invariant
 		}
-		r, err := runStep(withStep(ctx, name, "model"), s, tools, name, log, strings.Join(words, " "), dir, nil)
+		timed, timing := timedContext(withStep(ctx, name, "model"))
+		r, err := runStep(timed, s, tools, name, log, strings.Join(words, " "), dir, nil)
+		event := map[string]any{"event": "command_result", "name": "model", "status": r.Status, "output": Cap(r.Output), "wall_ms": timing.wallMS}
 		if err != nil {
+			if timing.started {
+				logEvent(log, event)
+			}
 			return ModelResult{}, err
 		}
-		event := map[string]any{"event": "command_result", "name": "model", "status": r.Status, "output": Cap(r.Output)}
 		if st.what == "test" {
 			matches := modelTestResults.FindAllStringSubmatch(r.Output, -1)
 			names := []string{}

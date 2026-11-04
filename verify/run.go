@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -87,11 +88,14 @@ func Fix(ctx context.Context, s *sys.Session, in Input) error {
 	for i, cmd := range in.Config.Fix {
 		name := fmt.Sprintf("fix-%d", i+1)
 		logEvent(in.Log, map[string]any{"event": "command", "name": name, "command": cmd})
-		r, err := runStep(ctx, s, in.Tools, name, in.Log, cmd, in.Root, nil)
+		timed, timing := timedContext(ctx)
+		r, err := runStep(timed, s, in.Tools, name, in.Log, cmd, in.Root, nil)
+		if timing.started {
+			logEvent(in.Log, map[string]any{"event": "command_result", "name": name, "status": r.Status, "output": Cap(r.Output), "wall_ms": timing.wallMS})
+		}
 		if err != nil {
 			return err
 		}
-		logEvent(in.Log, map[string]any{"event": "command_result", "name": name, "status": r.Status, "output": Cap(r.Output)})
 		if err := in.intact(); err != nil {
 			return err
 		}
@@ -184,6 +188,7 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 	if model == nil {
 		p.Model = ModelNone
 	}
+	var checksStart, checksEnd time.Time
 	scratchMoved, red, err := func() ([]string, bool, error) {
 		scratch := sys.TmpPath("kogen-verify")
 		defer os.RemoveAll(scratch)
@@ -209,6 +214,9 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 				p.NotRun = append(p.NotRun, it.name)
 				continue
 			}
+			if checksStart.IsZero() {
+				checksStart = time.Now()
+			}
 			if !effective && len(in.Dependencies) == 0 && in.Stage == nil && it.kind == "check" && independentGo(it.command, s) && attemptFrom(ctx) == nil {
 				end := index + 1
 				for end < len(items) && items[end].kind == "check" && independentGo(items[end].command, s) {
@@ -218,6 +226,7 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 					parallelIn := in
 					parallelIn.Log = &lockedLogger{inner: in.Log}
 					results, err := runCohort(ctx, s, parallelIn, scratch, items[index:end])
+					checksEnd = time.Now()
 					if err != nil {
 						return nil, false, err
 					}
@@ -304,6 +313,7 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 				}
 				red = r.Status != 0
 			}
+			checksEnd = time.Now()
 		}
 		if in.AcceptanceSuite != nil {
 			uncovered := []string{}
@@ -362,7 +372,10 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 	p.Green = !red && len(p.NotRun) == 0 && len(p.Failing) == 0 && len(p.Moved) == 0
 	s.Progress(p.Summary())
 	event := map[string]any{"event": "pass", "pass": in.N, "green": p.Green, "failing": p.Failing,
-		"not_run": p.NotRun, "files_changed_while_checks_ran": p.Moved}
+		"not_run": p.NotRun, "files_changed_while_checks_ran": p.Moved, "checks_wall_ms": int64(0)}
+	if !checksStart.IsZero() {
+		event["checks_wall_ms"] = checksEnd.Sub(checksStart).Milliseconds()
+	}
 	if effective {
 		event["execution_order"] = p.ExecutionOrder
 		event["pulled_forward"] = p.PulledForward
@@ -387,11 +400,14 @@ func runLogged(ctx context.Context, s *sys.Session, in Input, dir, name, command
 	if report != "" {
 		env = map[string]string{"KOGEN_CHECK_REPORT": report}
 	}
-	r, err := runStep(ctx, s, in.Tools, name, in.Log, command, dir, env)
+	timed, timing := timedContext(ctx)
+	r, err := runStep(timed, s, in.Tools, name, in.Log, command, dir, env)
+	if timing.started {
+		logEvent(in.Log, map[string]any{"event": "command_result", "name": name, "status": r.Status, "output": Cap(r.Output), "wall_ms": timing.wallMS})
+	}
 	if err != nil {
 		return CommandResult{}, err
 	}
-	logEvent(in.Log, map[string]any{"event": "command_result", "name": name, "status": r.Status, "output": Cap(r.Output)})
 	return CommandResult{Name: name, Command: command, Status: r.Status, Output: r.Output}, nil
 }
 
@@ -431,13 +447,16 @@ func runFeature(ctx context.Context, s *sys.Session, root string, tools Tools, f
 		return Acceptance{}, err
 	}
 	logEvent(log, map[string]any{"event": "command", "name": "acceptance", "command": command})
-	r, err := runStepAs(withStep(ctx, "acceptance", "acceptance"), s, tools, "acceptance", log, command, root, map[string]string{
+	timed, timing := timedContext(withStep(ctx, "acceptance", "acceptance"))
+	r, err := runStepAs(timed, s, tools, "acceptance", log, command, root, map[string]string{
 		"KOGEN_ACCEPTANCE_FEATURES": feature,
 		"KOGEN_ACCEPTANCE_REPORT":   report,
 	}, acceptanceMarker)
+	if timing.started {
+		logEvent(log, map[string]any{"event": "command_result", "name": "acceptance", "status": r.Status, "output": Cap(r.Output), "wall_ms": timing.wallMS})
+	}
 	if err != nil {
 		return Acceptance{}, err
 	}
-	logEvent(log, map[string]any{"event": "command_result", "name": "acceptance", "status": r.Status, "output": Cap(r.Output)})
 	return Account(root, feature, expected, report, r.Status, r.Output), nil
 }

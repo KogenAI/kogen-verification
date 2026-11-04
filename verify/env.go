@@ -109,6 +109,18 @@ func record(e Evidence, event map[string]any) {
 	}
 }
 
+type commandTiming struct {
+	started bool
+	wallMS  int64
+}
+
+type commandTimingKey struct{}
+
+func timedContext(ctx context.Context) (context.Context, *commandTiming) {
+	t := &commandTiming{}
+	return context.WithValue(ctx, commandTimingKey{}, t), t
+}
+
 // run runs one command with the tools' environment next to the caller's and stops when ctx
 // is done. Under an Attempt (an approval check) the command is also one bounded, recorded step.
 // Once it returns, every process it started is swept (see runStepAs).
@@ -156,12 +168,24 @@ func runStepAs(ctx context.Context, s *sys.Session, tools Tools, name string, l 
 	env[markerVar] = runID
 	script := acceptanceReaped(acceptanceScript(markerFile, command))
 	var res sys.Result
+	timing, _ := ctx.Value(commandTimingKey{}).(*commandTiming)
+	before := groupSet(s)
+	began := time.Now()
 	if a := attemptFrom(ctx); a != nil {
 		res, err = a.run(ctx, s, command, script, dir, env)
 	} else {
 		res, err = RunWatched(s, name, command, l, func() (sys.Result, error) {
 			return s.RunContext(ctx, script, dir, sys.Options{Env: env, KillGroupOnExit: true})
 		})
+	}
+	if timing != nil {
+		timing.wallMS = time.Since(began).Milliseconds()
+		for _, group := range s.Groups() {
+			if !before[group] {
+				timing.started = true
+				break
+			}
+		}
 	}
 	if ctx.Err() != nil {
 		if ie := s.Err(); ie != nil {

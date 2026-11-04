@@ -62,6 +62,7 @@ func runCohortCheck(ctx context.Context, cancelWork <-chan struct{}, parent *sys
 	stopInterrupt := context.AfterFunc(parent.Context(), cancel)
 	defer stopInterrupt()
 	script := acceptanceReaped(acceptanceScript(marker, it.command))
+	started := time.Now()
 	captured := s.StartCaptured(childCtx, script, dir)
 	done := make(chan outcome, 1)
 	go func() { <-captured.Done(); r, _, e := captured.Snapshot(); done <- outcome{r, e} }()
@@ -95,6 +96,7 @@ func runCohortCheck(ctx context.Context, cancelWork <-chan struct{}, parent *sys
 		<-watched
 		o.err = parent.Err()
 	}
+	wallMS := time.Since(started).Milliseconds()
 	// A missing result after the owned group disappeared is the existing no-progress
 	// rule: there is no process left to join, and the missing result is abandoned.
 	// Otherwise Stop joins cancellation and sweeps groups left by a completed shell.
@@ -110,6 +112,13 @@ func runCohortCheck(ctx context.Context, cancelWork <-chan struct{}, parent *sys
 		ev["error"] = Cut(sweepErr.Error())
 	}
 	logEvent(in.Log, ev)
+	if !captured.Started().IsZero() {
+		status := o.res.Status
+		if cancelled {
+			status = -1
+		}
+		logEvent(in.Log, map[string]any{"event": "command_result", "name": it.name, "status": status, "output": Cap(o.res.Output), "wall_ms": wallMS})
+	}
 	if err := parent.Err(); err != nil {
 		return cohortResult{err: err}
 	}
@@ -127,7 +136,6 @@ func runCohortCheck(ctx context.Context, cancelWork <-chan struct{}, parent *sys
 		return cohortResult{err: o.err}
 	}
 	r := CommandResult{Name: it.name, Command: it.command, Status: o.res.Status, Output: o.res.Output}
-	logEvent(in.Log, map[string]any{"event": "command_result", "name": it.name, "status": r.Status, "output": Cap(r.Output)})
 	return cohortResult{result: r, cancelled: cancelled}
 }
 
