@@ -18,8 +18,9 @@ const acceptanceReaperFlag = "--kogen-verification-acceptance-reaper"
 const prSetChildSubreaper = 36
 
 // acceptanceReaped runs script under a dedicated per-run helper, which is a child subreaper:
-// every descendant of the command whose parent dies is reparented to the helper, which stops
-// and reaps them once the command's shell has ended. If this program cannot be named, script
+// every descendant of the command whose parent dies is reparented to the helper. The helper
+// reaps the children that exit while the command runs, and stops and reaps the rest once the
+// command's shell has ended. If this program cannot be named, script
 // is returned unchanged and the marker sweep alone applies.
 func acceptanceReaped(script string) string {
 	self, err := os.Executable()
@@ -38,8 +39,10 @@ func init() {
 	os.Exit(runAcceptanceReaper(os.Args[2]))
 }
 
-// runAcceptanceReaper runs /bin/sh -c script as a child subreaper, then stops and reaps every
-// child it adopted, and returns the shell's exit status (128+n for a signal n).
+// runAcceptanceReaper runs /bin/sh -c script as a child subreaper. While the shell runs it reaps
+// every child that exits, so an adopted orphan never lingers as a zombie, and signals nothing.
+// Once the shell has ended it stops and reaps every child it still has, and returns the shell's
+// exit status (128+n for a signal n), whatever other children were reaped before it.
 func runAcceptanceReaper(script string) int {
 	argv := []string{"/bin/sh", "-c", script}
 	if _, _, errno := syscall.Syscall(syscall.SYS_PRCTL, prSetChildSubreaper, 1, 0); errno != 0 {
@@ -60,15 +63,26 @@ func runAcceptanceReaper(script string) int {
 	if err != nil {
 		return 127
 	}
-	state, err := proc.Wait()
-	if err != nil {
-		return 127
+	// Wait for any child, not only the shell: an adopted orphan that exits is reaped at once.
+	// The shell's own status is kept; every other status is discarded.
+	var ws syscall.WaitStatus
+	for {
+		pid, err := syscall.Wait4(-1, &ws, 0, nil)
+		if err == syscall.EINTR {
+			continue
+		}
+		if err != nil {
+			return 127
+		}
+		if pid == proc.Pid {
+			break
+		}
 	}
 	stopAdoptedChildren()
-	if ws, ok := state.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+	if ws.Signaled() {
 		return 128 + int(ws.Signal())
 	}
-	return state.ExitCode()
+	return ws.ExitStatus()
 }
 
 // stopAdoptedChildren reaps and stops this process's children until a snapshot shows none:
