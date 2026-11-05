@@ -37,6 +37,10 @@ type Input struct {
 	// stage's checks (named stage-<id>-<n>). Acceptance, models, maintained features and the project's checks
 	// are not part of it, so such a pass is never whole-Intent proof.
 	Stage *Stage
+	// MaintainedSpecs names the maintained specifications and the implementation they
+	// describe; the pass then records which of them the candidate changed. Scoped stage
+	// passes ignore it.
+	MaintainedSpecs *MaintainedSpecs
 	// Intact is the baseline guard (VER-8): it returns the refusal when the approved baseline
 	// changed. It runs after each fixer and after the pass's commands.
 	Intact func() error
@@ -189,6 +193,10 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 	if model == nil {
 		p.Model = ModelNone
 	}
+	var specs *MaintainedSpecs
+	if in.Stage == nil && in.MaintainedSpecs.declared() {
+		specs = in.MaintainedSpecs
+	}
 	var checksStart, checksEnd time.Time
 	scratchMoved, red, err := func() ([]string, bool, error) {
 		scratch := sys.TmpPath("kogen-verify")
@@ -199,6 +207,16 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 		}
 		if err := os.MkdirAll(filepath.Join(scratch, ".kogen/local"), 0o755); err != nil {
 			return nil, false, err
+		}
+		if specs != nil {
+			if err := checkDeclaredExist(scratch, specs); err != nil {
+				return nil, false, err
+			}
+			changed, err := repo.Changed(in.Start, before)
+			if err != nil {
+				return nil, false, err
+			}
+			p.SpecUpdate = classifySpecUpdate(changed, specs)
 		}
 		if in.AcceptanceSuite != nil {
 			files, err := suiteFiles(scratch, in.AcceptanceSuite.Location)
@@ -374,6 +392,9 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 	}
 	if in.AcceptanceSuite != nil && in.AcceptanceSuite.RequireFullCoverage && len(p.UncoveredAcceptance) > 0 {
 		p.Failing = append(p.Failing, "uncovered acceptance: "+strings.Join(p.UncoveredAcceptance, ", "))
+	}
+	if specs != nil && specs.RequireUpdate && p.SpecUpdate.SpecsNotUpdated {
+		p.Failing = append(p.Failing, p.SpecUpdate.Notice())
 	}
 	p.Green = !red && len(p.NotRun) == 0 && len(p.Failing) == 0 && len(p.Moved) == 0
 	s.Progress(p.Summary())

@@ -87,6 +87,7 @@ type Pass struct {
 	NotRun                   []string
 	Moved                    []string
 	Failing                  []string
+	SpecUpdate               *SpecUpdate
 
 	// Legacy marks a recorded pass from before `setup` and `not_run` existed: complete clean
 	// evidence of that kind stays reusable (VER-7).
@@ -113,6 +114,7 @@ type passJSON struct {
 	NotRun                   any                       `json:"not_run,omitempty"` // absent in a legacy record
 	Moved                    []string                  `json:"moved"`
 	Failing                  []string                  `json:"failing"`
+	SpecUpdate               *SpecUpdate               `json:"spec_update,omitempty"`
 }
 
 func nonNil[T any](s []T) []T {
@@ -126,6 +128,11 @@ func nonNil[T any](s []T) []T {
 func (p Pass) MarshalJSON() ([]byte, error) {
 	j := passJSON{N: p.N, Clean: p.Clean, Green: p.Green, Tree: p.Tree, Checks: nonNil(p.Checks),
 		Speculative: p.Speculative, Cancelled: p.Cancelled, Moved: nonNil(p.Moved), Failing: nonNil(p.Failing), MaintainedModels: p.MaintainedModels, MaintainedFeatures: p.MaintainedFeatures}
+	if p.SpecUpdate != nil {
+		u := *p.SpecUpdate
+		u.ImplementationChanged, u.SpecsChanged, u.SpecsUnchanged = nonNil(u.ImplementationChanged), nonNil(u.SpecsChanged), nonNil(u.SpecsUnchanged)
+		j.SpecUpdate = &u
+	}
 	if p.PulledForward != nil {
 		j.ExecutionOrder, j.PulledForward = &p.ExecutionOrder, &p.PulledForward
 	}
@@ -188,12 +195,13 @@ func (p *Pass) UnmarshalJSON(data []byte) error {
 		NotRun                   []string                  `json:"not_run"`
 		Moved                    []string                  `json:"moved"`
 		Failing                  []string                  `json:"failing"`
+		SpecUpdate               *SpecUpdate               `json:"spec_update"`
 	}
 	if err := json.Unmarshal(data, &j); err != nil {
 		return err
 	}
 	*p = Pass{ExecutionOrder: j.ExecutionOrder, PulledForward: j.PulledForward, N: j.N, Clean: j.Clean, Green: j.Green, Tree: j.Tree, Setup: j.Setup, Checks: j.Checks,
-		Speculative: j.Speculative, Cancelled: j.Cancelled, NotRun: j.NotRun, Moved: j.Moved, Failing: j.Failing, MaintainedModels: j.MaintainedModels, MaintainedFeatures: j.MaintainedFeatures}
+		Speculative: j.Speculative, Cancelled: j.Cancelled, NotRun: j.NotRun, Moved: j.Moved, Failing: j.Failing, MaintainedModels: j.MaintainedModels, MaintainedFeatures: j.MaintainedFeatures, SpecUpdate: j.SpecUpdate}
 	p.UncoveredAcceptance, p.UncoveredAcceptanceCount = j.UncoveredAcceptance, j.UncoveredAcceptanceCount
 	_, hasSetup := present["setup"]
 	_, hasNotRun := present["not_run"]
@@ -477,6 +485,9 @@ func (p Pass) Feedback(acceptanceRun, completion string) string {
 			add(failure, 0)
 		}
 	}
+	if line := p.specNotice(); line != "" {
+		add(line, 0)
+	}
 	if len(p.Moved) > 0 {
 		add("files changed while checks ran: "+strings.Join(p.Moved, ", "), 0)
 	}
@@ -610,6 +621,9 @@ func (p Pass) Results() string {
 	lines := []string{fmt.Sprintf("acceptance: passed (%d scenarios)", scenarios), model}
 	for _, c := range p.Checks {
 		lines = append(lines, "check "+c.Name+": passed")
+	}
+	if line := p.specNotice(); line != "" {
+		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
 }
