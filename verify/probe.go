@@ -114,6 +114,100 @@ func CopyTree(root, scratch string) error {
 	return nil
 }
 
+// gitOutput runs git in dir with env and returns its trimmed standard output.
+func gitOutput(ctx context.Context, env []string, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(slices.Clone(env), "GIT_OPTIONAL_LOCKS=0")
+	out, err := cmd.Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+// copyGitMetadata gives the scratch copy of the checkout at root a repository of its own at
+// scratch/.git: the source's HEAD (branch or detached) at the same commit, the source's objects
+// borrowed through alternates, an index read from HEAD, hooks disabled and none of the source's
+// config. It reads the source only. It returns an error, leaving a partial repository for the
+// caller to remove, when root is not the top level of a git work tree with a commit at HEAD or
+// any step fails.
+func copyGitMetadata(ctx context.Context, env []string, root, scratch string) error {
+	git := func(dir string, args ...string) (string, error) { return gitOutput(ctx, env, dir, args...) }
+	top, err := git(root, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return err
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	if a, err := filepath.EvalSymlinks(absRoot); err == nil {
+		absRoot = a
+	}
+	if t, err := filepath.EvalSymlinks(top); err != nil || t != absRoot {
+		return fmt.Errorf("%s is not the top level of a work tree", root)
+	}
+	commit, err := git(root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	if err != nil {
+		return err
+	}
+	format, err := git(root, "rev-parse", "--show-object-format")
+	if err != nil {
+		return err
+	}
+	objects, err := git(root, "rev-parse", "--path-format=absolute", "--git-path", "objects")
+	if err != nil {
+		return err
+	}
+	shallow, err := git(root, "rev-parse", "--path-format=absolute", "--git-path", "shallow")
+	if err != nil {
+		return err
+	}
+	branch, err := git(root, "symbolic-ref", "--quiet", "HEAD")
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		if !strings.HasPrefix(branch, "refs/heads/") {
+			return fmt.Errorf("HEAD names %s, not a branch", branch)
+		}
+	case errors.As(err, &exit) && exit.ExitCode() == 1:
+		branch = ""
+	default:
+		return err
+	}
+	if _, err := git(scratch, "init", "--quiet", "--template=", "--object-format="+format, scratch); err != nil {
+		return err
+	}
+	dotGit := filepath.Join(scratch, ".git")
+	info := filepath.Join(dotGit, "objects", "info")
+	if err := os.MkdirAll(info, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(info, "alternates"), []byte(objects+"\n"), 0o644); err != nil {
+		return err
+	}
+	if data, err := os.ReadFile(shallow); err == nil {
+		if err := os.WriteFile(filepath.Join(dotGit, "shallow"), data, 0o644); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if _, err := git(scratch, "config", "core.hooksPath", "/dev/null"); err != nil {
+		return err
+	}
+	if branch != "" {
+		if _, err := git(scratch, "update-ref", branch, commit); err != nil {
+			return err
+		}
+		if _, err := git(scratch, "symbolic-ref", "HEAD", branch); err != nil {
+			return err
+		}
+	} else if _, err := git(scratch, "update-ref", "--no-deref", "HEAD", commit); err != nil {
+		return err
+	}
+	_, err = git(scratch, "read-tree", "HEAD")
+	return err
+}
+
 // ProbeFile is a file a probe adds to (or replaces in) its scratch copy before the command
 // runs, relative to the copy.
 type ProbeFile struct{ Path, Content string }
@@ -173,6 +267,10 @@ func (pr Probe) Run(ctx context.Context, s *sys.Session) (ProbeResult, error) {
 	if err := CopyTree(pr.Root, scratch); err != nil {
 		return ProbeResult{}, err
 	}
+	penv := probeEnv(s, scratch, home, runTmp, hexHome)
+	if err := copyGitMetadata(ctx, penv, pr.Root, scratch); err != nil {
+		os.RemoveAll(filepath.Join(scratch, ".git"))
+	}
 	var problems []string
 	for _, f := range pr.Files {
 		problems = append(problems, writeScratch(scratch, f)...)
@@ -204,7 +302,7 @@ func (pr Probe) Run(ctx context.Context, s *sys.Session) (ProbeResult, error) {
 	}
 	defer os.Remove(markerFile)
 	deadline, observer := probeDeadline, probeObserver
-	ps := sys.NewWith(probeEnv(s, scratch, home, runTmp, hexHome), scratch)
+	ps := sys.NewWith(penv, scratch)
 	defer followInterrupt(s, ps)()
 	env := pr.Tools.env()
 	env[stepMarker] = runID
