@@ -58,3 +58,35 @@ func TestFeedbackInvariantAndSpeculativeFailures(t *testing.T) {
 		t.Fatalf("details repeated: %s", got)
 	}
 }
+
+func TestFeedbackCountsBlankFailuresInOmittedTail(t *testing.T) {
+	lines := make([]string, 300)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("row %03d ", i+1) + strings.Repeat("x", 92)
+	}
+	big := strings.Join(lines, "\n")
+	for blank, want := range map[string]string{"": "left out 2 items, 14731 bytes", " \n\t ": "left out 2 items, 14737 bytes"} {
+		got := Pass{N: 1, Model: ModelResult{State: "failed", Problems: []string{big, blank}}}.Feedback("run", "")
+		if len(got) > 16384 || got[strings.LastIndex(got, "\n")+1:] != want {
+			t.Errorf("blank %q: last line %q want %q", blank, got[strings.LastIndex(got, "\n")+1:], want)
+		}
+	}
+}
+
+func TestFeedbackStripsAdjacentNames(t *testing.T) {
+	d := func(s string) *string { return &s }
+	p := Pass{N: 1, Model: ModelResult{State: "ok"},
+		Acceptance: &Acceptance{Status: 1,
+			Scenarios: []ScenarioResult{{Name: "a", Line: 1, Status: "failed", Detail: d("a a has data")}, {Name: "b", Line: 2, Status: "failed", Detail: d("b b has data")}},
+			Problems:  []string{"failed: a (line 1): a a has data", "failed: b (line 2): b b has data"}},
+		Checks: []CommandResult{{Name: "one", Status: 1, Output: "one one: has data"}, {Name: "two", Status: 1, Output: "two two: has data"}}}
+	got := p.Feedback("run", "")
+	for _, s := range []string{"2 scenarios: a, b", "2 checks: one, two"} {
+		if strings.Count(got, s) != 1 {
+			t.Errorf("want one %q in %s", s, got)
+		}
+	}
+	if strings.Count(got, "has data") != 2 {
+		t.Fatalf("details not grouped: %s", got)
+	}
+}

@@ -410,7 +410,7 @@ func (p Pass) Feedback(acceptanceRun, completion string) string {
 	problems := func(ps []string, scenarios []ScenarioResult) {
 		items := make([]feedbackItem, 0, len(ps))
 		for _, problem := range ps {
-			item := feedbackItem{text: indent(problem), detail: strings.TrimSpace(problem), name: problem}
+			item := feedbackItem{failing: true, text: indent(problem), detail: strings.TrimSpace(problem), name: problem}
 			if match := feedbackInvariant.FindStringSubmatch(problem); match != nil {
 				item.name = match[1]
 				item.display = indent(normalizeFeedback(problem, item.name))
@@ -454,7 +454,7 @@ func (p Pass) Feedback(acceptanceRun, completion string) string {
 	var commands []feedbackItem
 	for _, c := range slices.Concat(p.Setup, p.Checks) {
 		if c.Status != 0 {
-			commands = append(commands, feedbackItem{text: fmt.Sprintf("check %s (%s): failed, exit status %d\n%s", c.Name, c.Command, c.Status, indent(Tail(c.Output, 60))), detail: strconv.Itoa(c.Status) + ":" + normalizeFeedback(Tail(c.Output, 60), c.Name), name: c.Name, display: indent(normalizeFeedback(Tail(c.Output, 60), c.Name))})
+			commands = append(commands, feedbackItem{failing: true, text: fmt.Sprintf("check %s (%s): failed, exit status %d\n%s", c.Name, c.Command, c.Status, indent(Tail(c.Output, 60))), detail: strconv.Itoa(c.Status) + ":" + normalizeFeedback(Tail(c.Output, 60), c.Name), name: c.Name, display: indent(normalizeFeedback(Tail(c.Output, 60), c.Name))})
 		}
 	}
 	parts = append(parts, groupFeedback(commands, "checks")...)
@@ -472,7 +472,7 @@ func (p Pass) Feedback(acceptanceRun, completion string) string {
 					items = append(items, feedbackItem{text: text})
 				} else {
 					detail := normalizeFeedback(Tail(r.Output, 60), r.Name)
-					items = append(items, feedbackItem{text: text, detail: strconv.Itoa(r.Status) + ":" + detail, name: r.Name, display: indent(detail)})
+					items = append(items, feedbackItem{failing: true, text: text, detail: strconv.Itoa(r.Status) + ":" + detail, name: r.Name, display: indent(detail)})
 				}
 			}
 			parts = append(parts, groupFeedback(items, "checks")...)
@@ -502,7 +502,10 @@ type feedbackPart struct {
 	text  string
 	count int
 }
-type feedbackItem struct{ text, detail, name, display string }
+type feedbackItem struct {
+	text, detail, name, display string
+	failing                     bool
+}
 
 var feedbackInvariant = regexp.MustCompile(`^model\.qnt: invariant (.+?) violated \(seed [^)]*\)`)
 
@@ -511,7 +514,15 @@ var feedbackLineNumber = regexp.MustCompile(`(?i)(\bline\s+)[0-9]+`)
 func normalizeFeedback(detail, name string) string {
 	if name != "" {
 		re := regexp.MustCompile(`(^|[^[:alnum:]_])` + regexp.QuoteMeta(name) + `($|[^[:alnum:]_])`)
-		detail = re.ReplaceAllString(detail, "${1}${2}")
+		// A match consumes its boundary characters, so adjacent occurrences need
+		// repeated passes; each changing pass shortens the text.
+		for {
+			next := re.ReplaceAllString(detail, "${1}${2}")
+			if next == detail {
+				break
+			}
+			detail = next
+		}
 	}
 	detail = feedbackLineNumber.ReplaceAllString(detail, "${1}")
 	lines := strings.Split(strings.TrimSpace(detail), "\n")
@@ -523,13 +534,16 @@ func normalizeFeedback(detail, name string) string {
 func groupFeedback(items []feedbackItem, label string) []feedbackPart {
 	groups := map[string][]int{}
 	for i, item := range items {
-		if item.detail != "" {
+		if item.failing {
 			groups[item.detail] = append(groups[item.detail], i)
 		}
 	}
 	var parts []feedbackPart
 	for i, item := range items {
-		group := groups[item.detail]
+		var group []int
+		if item.failing {
+			group = groups[item.detail]
+		}
 		if len(group) == 0 {
 			parts = append(parts, feedbackPart{item.text, 0})
 			continue
