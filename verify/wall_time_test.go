@@ -89,6 +89,8 @@ func TestWallTimeDeadlineAndNeverStarted(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deadline: %v", err)
 	}
+	aborted := requireAborted(t, log, "timeout")
+	eq(t, "item", aborted["item"], "setup-1")
 	events := log.named("command_result")
 	requireWall(t, events, "setup-1")
 	ms := events[0]["wall_ms"].(int64)

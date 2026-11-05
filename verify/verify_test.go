@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -255,7 +256,9 @@ func TestBaselineGuardRunsAfterEachFixerAndAfterThePass(t *testing.T) {
 			s, _ := p.session()
 			calls := 0
 			refusal := sys.Fail("candidate", "baseline_changed", "the Build changed acceptance files: x", 1)
+			log := &memLog{}
 			in := p.input(1)
+			in.Log = log
 			in.Intact = func() error {
 				calls++
 				if calls == tc.failAt {
@@ -268,6 +271,13 @@ func TestBaselineGuardRunsAfterEachFixerAndAfterThePass(t *testing.T) {
 				t.Fatalf("err = %v, want the guard's refusal", err)
 			}
 			eq(t, "guard calls", calls, tc.wantCall)
+			if tc.failAt == 3 {
+				aborted := requireAborted(t, log, "baseline_changed")
+				eq(t, "item", aborted["item"], any(""))
+				eqSlice(t, "completed", aborted["completed"].([]string), []string{"acceptance"})
+			} else if got := log.named("pass_aborted"); len(got) != 0 {
+				t.Fatalf("a fixer refusal logged %v", got)
+			}
 			requireNoLeftovers(t, tmp)
 		})
 	}
@@ -288,7 +298,10 @@ func TestInterruptStopsThePassAndRemovesTheScratchFolder(t *testing.T) {
 		}
 	}()
 	start := time.Now()
-	_, err := Verify(context.Background(), s, p.input(1))
+	log := &memLog{}
+	in := p.input(1)
+	in.Log = log
+	_, err := Verify(context.Background(), s, in)
 	var intr *sys.Interrupted
 	if !errors.As(err, &intr) || intr.Signal != "SIGINT" {
 		t.Fatalf("err = %v, want an interrupt", err)
@@ -297,6 +310,90 @@ func TestInterruptStopsThePassAndRemovesTheScratchFolder(t *testing.T) {
 		t.Fatal("the interrupt did not stop the command")
 	}
 	eqSlice(t, "later check", p.ran("after"), nil)
+	aborted := requireAborted(t, log, "cancelled")
+	eq(t, "item", aborted["item"], any("slow"))
+	eqSlice(t, "completed", aborted["completed"].([]string), []string{"acceptance"})
+	requireNoLeftovers(t, tmp)
+}
+
+// requireAborted checks that the pass ended with exactly one pass_aborted event, as its last
+// event, with the exact keys and the cause, and returns it.
+func requireAborted(t *testing.T, log *memLog, cause string) map[string]any {
+	t.Helper()
+	got := log.named("pass_aborted")
+	if len(got) != 1 || len(log.named("pass")) != 0 {
+		t.Fatalf("pass_aborted = %v, pass = %v", got, log.named("pass"))
+	}
+	if last := log.events[len(log.events)-1]; last["event"] != "pass_aborted" {
+		t.Fatalf("last event = %v", last)
+	}
+	e := got[0]
+	keys := []string{}
+	for k := range e {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	eqSlice(t, "keys", keys, []string{"cause", "checks_wall_ms", "completed", "event", "item", "pass"})
+	eq(t, "cause", e["cause"], any(cause))
+	eq(t, "pass", e["pass"], any(1))
+	if _, ok := e["checks_wall_ms"].(int64); !ok {
+		t.Fatalf("checks_wall_ms = %T", e["checks_wall_ms"])
+	}
+	return e
+}
+
+func TestRunnerErrorLogsPassAbortedWithTheItemAndTheFinishedItems(t *testing.T) {
+	tmp := isolateTmp(t)
+	p := newProj(t)
+	p.Config.Setup = []string{"true"}
+	p.Intent.Slug = "missing-feature"
+	s, _ := p.session()
+	log := &memLog{}
+	in := p.input(1)
+	in.Log = log
+	pass, err := Verify(context.Background(), s, in)
+	if err == nil || !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("err = %v", err)
+	}
+	eq(t, "pass", pass.N, 0)
+	aborted := requireAborted(t, log, "runner_error")
+	eq(t, "item", aborted["item"], any("acceptance"))
+	eqSlice(t, "completed", aborted["completed"].([]string), []string{"setup-1"})
+	requireNoLeftovers(t, tmp)
+}
+
+func TestTreeReadFailureLogsPassAbortedBeforeAnyItem(t *testing.T) {
+	tmp := isolateTmp(t)
+	p := newProj(t)
+	s, _ := p.session()
+	log := &memLog{}
+	in := p.input(1)
+	in.Start = strings.Repeat("0", 40)
+	in.Log = log
+	if _, err := Verify(context.Background(), s, in); err == nil {
+		t.Fatal("no error")
+	}
+	aborted := requireAborted(t, log, "tree_error")
+	eq(t, "item", aborted["item"], any(""))
+	eqSlice(t, "completed", aborted["completed"].([]string), []string{})
+	eq(t, "wall", aborted["checks_wall_ms"], any(int64(0)))
+	requireNoLeftovers(t, tmp)
+}
+
+func TestMissingDeclaredSpecificationLogsPassAbortedOther(t *testing.T) {
+	tmp := isolateTmp(t)
+	p := newProj(t)
+	s, _ := p.session()
+	log := &memLog{}
+	in := p.input(1)
+	in.Log = log
+	in.MaintainedSpecs = &MaintainedSpecs{Specs: []string{"docs/missing-spec.md"}}
+	if _, err := Verify(context.Background(), s, in); err == nil {
+		t.Fatal("no error")
+	}
+	aborted := requireAborted(t, log, "other")
+	eq(t, "item", aborted["item"], any(""))
+	eqSlice(t, "completed", aborted["completed"].([]string), []string{})
 	requireNoLeftovers(t, tmp)
 }
 

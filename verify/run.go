@@ -115,19 +115,77 @@ type item struct {
 	report  string
 }
 
-// Verify runs one pass over the current candidate (VER-6, VER-7, VER-9): the exact clean
+// Terminal causes of an aborted pass, as logged by the pass_aborted event.
+const (
+	causeRunner    = "runner_error"
+	causeBaseline  = "baseline_changed"
+	causeCancelled = "cancelled"
+	causeTimeout   = "timeout"
+	causeTree      = "tree_error"
+	causeOther     = "other"
+)
+
+// passTrace is what Verify knows about a pass in progress, for the pass_aborted event: where
+// an error came from, the item that was executing, the items that finished, and when the
+// first item started.
+type passTrace struct {
+	origin    string
+	item      string
+	completed []string
+	start     time.Time
+}
+
+// fail notes where err came from and returns it unchanged. A nil err is returned as nil.
+func (t *passTrace) fail(origin string, err error) error {
+	if err != nil {
+		t.origin = origin
+	}
+	return err
+}
+
+func (t *passTrace) cause(err error) string {
+	var interrupted *sys.Interrupted
+	var timeout *stepTimeout
+	switch {
+	case errors.Is(err, context.Canceled), errors.As(err, &interrupted):
+		return causeCancelled
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &timeout):
+		return causeTimeout
+	case t.origin == "":
+		return causeOther
+	}
+	return t.origin
+}
+
+// Verify runs one pass over the current candidate. A pass that returns an error ends with one
+// pass_aborted event, so a reader of the log can tell a dead pass from a running one.
+func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
+	tr := &passTrace{}
+	p, err := verify(ctx, s, in, tr)
+	if err != nil {
+		wall := int64(0)
+		if !tr.start.IsZero() {
+			wall = time.Since(tr.start).Milliseconds()
+		}
+		logEvent(in.Log, map[string]any{"event": "pass_aborted", "pass": in.N, "cause": tr.cause(err), "item": tr.item,
+			"completed": nonNil(tr.completed), "checks_wall_ms": wall})
+	}
+	return p, err
+}
+
+// verify runs one pass over the current candidate (VER-6, VER-7, VER-9): the exact clean
 // candidate tree is materialized into a `kogen-verify-*` scratch directory with a synthetic
 // Git; setup commands run in order, then acceptance, the applicable model, maintained models, maintained features in supplied
 // order, and the project's checks in declaration order, stopping between items at the first definitive red. The
 // later items are named in NotRun. Files that changed in the scratch inputs or in the
 // checkout while the checks ran make the pass not green. The scratch directory is removed
 // whatever happens.
-func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
+func verify(ctx context.Context, s *sys.Session, in Input, tr *passTrace) (Pass, error) {
 	s.Progress(fmt.Sprintf("kogen: verifying (pass %d)", in.N))
 	repo := in.repo(s)
 	before, err := repo.Tree(in.Start, in.Excluded)
 	if err != nil {
-		return Pass{}, err
+		return Pass{}, tr.fail(causeTree, err)
 	}
 	var report string
 	if in.RunDir != "" {
@@ -181,7 +239,7 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 
 	reportDir, err := os.MkdirTemp("", "kogen-check-reports-")
 	if err != nil {
-		return Pass{}, err
+		return Pass{}, tr.fail(causeOther, err)
 	}
 	defer os.RemoveAll(reportDir)
 	for i := range items {
@@ -209,31 +267,31 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 	if in.Stage == nil && in.MaintainedSpecs.declared() {
 		specs = in.MaintainedSpecs
 	}
-	var checksStart, checksEnd time.Time
+	var checksEnd time.Time
 	scratchMoved, red, err := func() ([]string, bool, error) {
 		scratch := sys.TmpPath("kogen-verify")
 		defer os.RemoveAll(scratch)
 		mat, err := repo.Materialize(before, scratch)
 		if err != nil {
-			return nil, false, err
+			return nil, false, tr.fail(causeTree, err)
 		}
 		if err := os.MkdirAll(filepath.Join(scratch, ".kogen/local"), 0o755); err != nil {
-			return nil, false, err
+			return nil, false, tr.fail(causeOther, err)
 		}
 		if specs != nil {
 			if err := checkDeclaredExist(scratch, specs); err != nil {
-				return nil, false, err
+				return nil, false, tr.fail(causeOther, err)
 			}
 			changed, err := repo.Changed(in.Start, before)
 			if err != nil {
-				return nil, false, err
+				return nil, false, tr.fail(causeTree, err)
 			}
 			p.SpecUpdate = classifySpecUpdate(changed, specs)
 		}
 		if in.AcceptanceSuite != nil {
 			files, err := suiteFiles(scratch, in.AcceptanceSuite.Location)
 			if err != nil {
-				return nil, false, err
+				return nil, false, tr.fail(causeOther, err)
 			}
 			p.UncoveredAcceptance = files
 			p.UncoveredAcceptanceCount = new(int)
@@ -250,9 +308,10 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 				p.NotRun = append(p.NotRun, it.name)
 				continue
 			}
-			if checksStart.IsZero() {
-				checksStart = time.Now()
+			if tr.start.IsZero() {
+				tr.start = time.Now()
 			}
+			tr.item = it.name
 			if !effective && !checkDependency && in.Stage == nil && it.kind == "check" && independentGo(it.command, s) && attemptFrom(ctx) == nil {
 				end := index + 1
 				for end < len(items) && items[end].kind == "check" && independentGo(items[end].command, s) {
@@ -264,9 +323,12 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 					results, err := runCohort(ctx, s, parallelIn, scratch, items[index:end])
 					checksEnd = time.Now()
 					if err != nil {
-						return nil, false, err
+						return nil, false, tr.fail(causeRunner, err)
 					}
 					for offset, result := range results {
+						if !result.neverStarted && !result.cancelled {
+							tr.completed = append(tr.completed, items[index+offset].name)
+						}
 						if in.AcceptanceSuite != nil && !result.neverStarted {
 							checkCoverage(scratch, items[index+offset].report, executed)
 						}
@@ -282,6 +344,7 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 						}
 					}
 					index = end - 1
+					tr.item = ""
 					continue
 				}
 			}
@@ -292,12 +355,13 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 			case "acceptance":
 				a, err := RunAcceptance(ctx, s, scratch, in.Tools, in.Intent.Slug, in.acceptanceRun(), report, in.Evidence, in.Log)
 				if err != nil {
-					return nil, false, err
+					return nil, false, tr.fail(causeRunner, err)
 				}
 				if in.AcceptanceSuite != nil {
 					acceptanceCoverage(scratch, report, executed)
 				}
 				p.Acceptance = &a
+				tr.completed = append(tr.completed, it.name)
 				red = len(a.Problems) > 0
 			case "feature":
 				featureIndex := slices.Index(in.MaintainedFeatures, it.name)
@@ -305,30 +369,33 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 				os.Remove(featureReport)
 				a, err := runFeature(ctx, s, scratch, in.Tools, it.name, in.acceptanceRun(), featureReport, in.Evidence, in.Log, true)
 				if err != nil {
-					return nil, false, err
+					return nil, false, tr.fail(causeRunner, err)
 				}
 				if in.AcceptanceSuite != nil {
 					acceptanceCoverage(scratch, featureReport, executed)
 				}
 				p.MaintainedFeatures[featureIndex].Result = &a
+				tr.completed = append(tr.completed, it.name)
 				red = len(a.Problems) > 0
 			case "maintained":
 				maintainedIndex := slices.IndexFunc(in.MaintainedModels, func(m project.ModelSpec) bool { return m.Path == it.name })
 				m, err := CheckModel(ctx, s, scratch, in.Tools, &in.MaintainedModels[maintainedIndex], in.Evidence, in.Log)
 				if err != nil {
-					return nil, false, err
+					return nil, false, tr.fail(causeRunner, err)
 				}
 				for i, problem := range m.Problems {
 					m.Problems[i] = strings.Replace(problem, "model.qnt:", it.name+":", 1)
 				}
 				p.MaintainedModels[maintainedIndex].Result = m
+				tr.completed = append(tr.completed, it.name)
 				red = m.Failed()
 			case "model":
 				m, err := CheckModel(ctx, s, scratch, in.Tools, model, in.Evidence, in.Log)
 				if err != nil {
-					return nil, false, err
+					return nil, false, tr.fail(causeRunner, err)
 				}
 				p.Model = m
+				tr.completed = append(tr.completed, it.name)
 				red = m.Failed()
 			default:
 				if it.kind == "setup" {
@@ -337,7 +404,7 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 				}
 				r, err := runLogged(ctx, s, in, scratch, it.name, it.command, it.report)
 				if err != nil {
-					return nil, false, err
+					return nil, false, tr.fail(causeRunner, err)
 				}
 				if it.kind == "setup" {
 					p.Setup = append(p.Setup, r)
@@ -348,8 +415,10 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 					}
 				}
 				red = r.Status != 0
+				tr.completed = append(tr.completed, it.name)
 			}
 			checksEnd = time.Now()
+			tr.item = ""
 		}
 		if in.AcceptanceSuite != nil {
 			uncovered := []string{}
@@ -362,22 +431,22 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 			*p.UncoveredAcceptanceCount = len(uncovered)
 		}
 		moved, err := mat.Mutations()
-		return moved, red, err
+		return moved, red, tr.fail(causeTree, err)
 	}()
 	if err != nil {
 		return Pass{}, err
 	}
 
 	if err := in.intact(); err != nil {
-		return Pass{}, err
+		return Pass{}, tr.fail(causeBaseline, err)
 	}
 	after, err := repo.Tree(in.Start, in.Excluded)
 	if err != nil {
-		return Pass{}, err
+		return Pass{}, tr.fail(causeTree, err)
 	}
 	changed, err := repo.Changed(before, after)
 	if err != nil {
-		return Pass{}, err
+		return Pass{}, tr.fail(causeTree, err)
 	}
 	p.Moved = unique(slices.Concat(scratchMoved, changed))
 	p.Failing = []string{}
@@ -412,8 +481,8 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 	s.Progress(p.Summary())
 	event := map[string]any{"event": "pass", "pass": in.N, "green": p.Green, "failing": p.Failing,
 		"not_run": p.NotRun, "files_changed_while_checks_ran": p.Moved, "checks_wall_ms": int64(0)}
-	if !checksStart.IsZero() {
-		event["checks_wall_ms"] = checksEnd.Sub(checksStart).Milliseconds()
+	if !tr.start.IsZero() {
+		event["checks_wall_ms"] = checksEnd.Sub(tr.start).Milliseconds()
 	}
 	if effective {
 		event["execution_order"] = p.ExecutionOrder
