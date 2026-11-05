@@ -1,0 +1,10 @@
+models:
+  shape:
+    model: gpt-6.1-sol
+    effort: high
+  build:
+    model: gpt-6.1-sol
+    effort: medium
+  review:
+    model: gpt-6.1-terra
+    effort: medium

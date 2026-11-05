@@ -325,7 +325,7 @@ func TestReadinessRecordAndIdentity(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	ready := &verify.Ready{Intent: intent, Model: intent.Model, Head: "5c4121dde97fad9e716064a6edf90dc6a5fb96e3", CandidateTree: "aad40d1e2713322a34e1ba6b7a75f08289d1b4b2", SHA256: "7ab465474295b8e57c292840a8c713cd06d57bd5aaa594fd2505ebff01f6eda0", Baseline: []string{".kogen/intents/fixture/intent.md", ".kogen/intents/fixture/acceptance.feature", "features/steps/fixture_steps.js", ".kogen/project.yaml", ".kogen/models.yaml"}, AcceptanceExit: 1}
+	ready := &verify.Ready{Intent: intent, Model: intent.Model, Head: "cf76389c534b622b53ffc386a51864551ab1dad6", CandidateTree: "6307078b1939625eeb38acd2da2c49e9963d637c", SHA256: "f6e3814bafd9a1bea693d23825c90b3837b74aa95167fc07cd888649b08428f7", Baseline: []string{".kogen/intents/fixture/intent.md", ".kogen/intents/fixture/acceptance.feature", "features/steps/fixture_steps.js", ".kogen/project.yaml", ".kogen/models.yaml"}, AcceptanceExit: 1}
 	for i, scenario := range scenarios {
 		sr := verify.ScenarioRecord(scenario)
 		sr.UnexercisedSteps = []verify.StepRecord{}
