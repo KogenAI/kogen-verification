@@ -630,6 +630,9 @@ func (r *Readiness) Setup(ctx context.Context, s *sys.Session, root string, reus
 	if reuse {
 		if b, err := os.ReadFile(stamp); err == nil && string(b) == key {
 			s.Progress("kogen: setup already ran for this checkout state")
+			if len(r.Config.Setup) > 0 {
+				logEvent(r.Log, map[string]any{"event": "setup_skipped", "reason": "already_ran", "count": len(r.Config.Setup)})
+			}
 			return nil
 		}
 	}
@@ -639,15 +642,18 @@ func (r *Readiness) Setup(ctx context.Context, s *sys.Session, root string, reus
 		logEvent(r.Log, map[string]any{"event": "command", "name": name, "command": r.Attempt.Redact(cmd)})
 		count(r.Evidence, "setup")
 		var res sys.Result
+		timedCtx, timing := timedContext(withStep(ctx, name, "setup"))
 		err := timed(r.Evidence, "setup", func() error {
 			var err error
-			res, err = runStep(withStep(ctx, name, "setup"), s, r.Tools, name, r.Log, cmd, root, nil)
+			res, err = runStep(timedCtx, s, r.Tools, name, r.Log, cmd, root, nil)
 			return err
 		})
+		if timing.started {
+			logEvent(r.Log, map[string]any{"event": "command_result", "name": name, "status": res.Status, "output": Cap(res.Output), "wall_ms": timing.wallMS})
+		}
 		if err != nil {
 			return err
 		}
-		logEvent(r.Log, map[string]any{"event": "command_result", "name": name, "status": res.Status, "output": Cap(res.Output)})
 		if res.Status != 0 {
 			e := sys.Fail("environment", "setup_failed", fmt.Sprintf("Setup %s failed (status=%d).", name, res.Status), 3)
 			if r.Attempt != nil {

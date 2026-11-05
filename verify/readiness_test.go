@@ -352,11 +352,14 @@ func TestSetupRunsInOrderAndWarmPreparationReusesItsStamp(t *testing.T) {
 	p.Config.Setup = []string{appendTo(p.trace("setup"), "one"), appendTo(p.trace("setup"), "two")}
 	p.Config.Acceptance.StepsDir = "features/steps"
 	r := p.readiness()
+	log := &memLog{}
+	r.Log = log
 	s, stderr := p.session()
 	ctx := context.Background()
 	if err := r.Setup(ctx, s, p.Root, true); err != nil {
 		t.Fatal(err)
 	}
+	eq(t, "no skip on the first run", len(log.named("setup_skipped")), 0)
 	eqSlice(t, "first run", p.ran("setup"), []string{"one", "two"})
 	stamp := must(os.ReadFile(filepath.Join(p.Root, ".kogen/local/setup.json")))
 	var key map[string]any
@@ -369,6 +372,10 @@ func TestSetupRunsInOrderAndWarmPreparationReusesItsStamp(t *testing.T) {
 	}
 	eqSlice(t, "reused", p.ran("setup"), []string{"one", "two"})
 	eq(t, "notice", stderr.String(), "kogen: setup already ran for this checkout state\n")
+	skipped := log.named("setup_skipped")
+	eq(t, "skip events", len(skipped), 1)
+	eq(t, "skip event", fmt.Sprint(skipped[0]), "map[count:2 event:setup_skipped reason:already_ran]")
+	eq(t, "commands logged", len(log.named("command")), 2)
 	// Intent files and the steps folder do not count as checkout changes; other files do.
 	p.write(".kogen/intents/fixture/extra.md", "x")
 	p.write("features/steps/new_steps.js", "x")
@@ -386,6 +393,67 @@ func TestSetupRunsInOrderAndWarmPreparationReusesItsStamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	eq(t, "without reuse", len(p.ran("setup")), 6)
+}
+
+func TestSetupCommandResultsCarryWallTimeAlsoWhenTheCommandFails(t *testing.T) {
+	isolateTmp(t)
+	p := newProj(t)
+	p.Config.Setup = []string{"sleep 1", "exit 4"}
+	r := p.readiness()
+	log := &memLog{}
+	r.Log = log
+	s, _ := p.session()
+	err := r.Setup(context.Background(), s, p.Root, false)
+	e := failWith(t, err, "environment", "setup_failed")
+	eq(t, "detail", e.Detail, "Setup setup-2 failed (status=4).")
+	results := log.named("command_result")
+	eq(t, "results", len(results), 2)
+	eq(t, "first name", results[0]["name"], "setup-1")
+	eq(t, "first status", results[0]["status"], 0)
+	if ms, ok := results[0]["wall_ms"].(int64); !ok || ms < 1000 || ms >= 3000 {
+		t.Fatalf("setup-1 wall_ms = %#v", results[0]["wall_ms"])
+	}
+	eq(t, "second status", results[1]["status"], 4)
+	if ms, ok := results[1]["wall_ms"].(int64); !ok || ms < 0 || ms >= 1000 {
+		t.Fatalf("setup-2 wall_ms = %#v", results[1]["wall_ms"])
+	}
+}
+
+func TestCancelledSetupCommandStillLogsItsResultWithWallTime(t *testing.T) {
+	isolateTmp(t)
+	p := newProj(t)
+	p.Config.Setup = []string{"sleep 30"}
+	r := p.readiness()
+	log := &memLog{}
+	r.Log = log
+	s, _ := p.session()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := r.Setup(ctx, s, p.Root, false)
+	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("err = %v", err)
+	}
+	results := log.named("command_result")
+	eq(t, "results", len(results), 1)
+	if ms, ok := results[0]["wall_ms"].(int64); !ok || ms < 500 || ms >= 3000 {
+		t.Fatalf("wall_ms = %#v", results[0]["wall_ms"])
+	}
+}
+
+func TestNoSetupCommandsLogNeitherSetupEventAlsoOnAStampMatch(t *testing.T) {
+	isolateTmp(t)
+	p := newProj(t)
+	p.Config.Setup = nil
+	r := p.readiness()
+	log := &memLog{}
+	r.Log = log
+	s, _ := p.session()
+	for i := 0; i < 2; i++ {
+		if err := r.Setup(context.Background(), s, p.Root, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	eq(t, "events", len(log.events), 0)
 }
 
 func TestSetupFailureStopsAtTheFirstFailedCommandWithItsLastLines(t *testing.T) {

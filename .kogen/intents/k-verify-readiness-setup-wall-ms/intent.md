@@ -1,0 +1,39 @@
+# Record readiness setup wall time and skips
+
+Slug: k-verify-readiness-setup-wall-ms
+Model: not applicable — timing and the skip notice are observational log metadata; setup, stamp and readiness states and transitions are unchanged
+Acceptance:
+- .kogen/intents/k-verify-readiness-setup-wall-ms/acceptance.feature
+- features/steps/k-verify-readiness-setup-wall-ms__steps.js
+
+The readiness setup step (`Readiness.Setup` in `verify/readiness.go`, which `Readiness.Check` calls before any pass, and which warm shaping preparation calls with reuse) gains the same command timing as the pass events, plus one log event when it skips its commands.
+
+1. Each readiness setup `command_result` event gains `wall_ms`: the integer number of milliseconds measured exactly as in the pass events (the existing `timedContext` / `commandTiming` mechanism that `runStepAs` fills: from just before the command started to just after it returned, was cancelled or timed out). The event becomes `{"event":"command_result","name":"setup-<n>","status":<status>,"output":<capped output>,"wall_ms":<int>}`; every existing field and value stays as it is. Like the pass events, it is logged whenever the command started (`timing.started`), before any error is returned: when the command exits nonzero (as now) and also when it is cancelled or times out (today no `command_result` is written in that case). The error returned, the refusal (`environment/setup_failed`, exit 3, its detail and lines) and everything else that follows stay unchanged. A command that never started writes no `command_result`. The existing `step_sweep` event still comes before `command_result`.
+2. When `Setup` is called with reuse and the stamp `.kogen/local/setup.json` matches the setup key, and at least one setup command is configured, the log gets exactly one event `{"event":"setup_skipped","reason":"already_ran","count":<number of configured setup commands>}` and no `command` or `command_result` event. The Progress line `kogen: setup already ran for this checkout state` is still printed exactly as now.
+3. With no setup commands configured, readiness logs neither event: no setup `command_result` and no `setup_skipped`, also when the stamp matches with reuse (the Progress line is still printed as now).
+4. Nothing else changes: Pass JSON, readiness results and records, the stamp content, exit codes, errors and Progress text stay byte-identical; the existing `step_sweep` events, all other log events and the goldens are untouched. `wall_ms` ends in `_ms`, so consumers that mask volatile keys keep masking it.
+
+## Decisions
+- The count field of `setup_skipped` is named `count`; the event has exactly the keys `event`, `reason` and `count`. (source: request)
+- The readiness setup `command_result` keeps its existing fields and adds only `wall_ms`, logged under the same started/cancelled/timed-out rule as the pass events. (source: request)
+- Fixed slack for the one-second `sleep 1` setup command is 2000 ms: its `wall_ms` must lie in [1000, 3000). The failing `exit 4` command must lie in [0, 1000), so a cumulative time since setup began is refused. (source: request)
+- A cancelled `sleep 30` setup command under a one-second deadline must report `wall_ms` in [500, 3000): measured until cancellation, not the full sleep and not zero. (source: request)
+
+## Source comparison
+- Addressed: Problem and Need, readiness setup `command_result` carries integer `wall_ms` measured like the pass events and is written even when the command fails: outcome item 1; acceptance scenarios "Every readiness setup command result carries its wall time, also when the command fails" (`setup: [sleep 1, exit 4]`, synthetic acceptance 1, with the required lower bound 1000 and the fixed slack) and "A cancelled readiness setup command still records its wall time until cancellation" (the "was cancelled or timed out" clause).
+- Addressed: Need, `setup_skipped` with `reason: "already_ran"` and the number of skipped setup commands: outcome item 2; scenario "Setup skipped because its stamp matches logs one setup_skipped event" (`setup: [true]` run twice with reuse on the same checkout state, synthetic acceptance 2: one `setup_skipped`, count 1, no `command` event) and "The setup_skipped event counts every skipped setup command" (two commands, count 2).
+- Addressed: Need, nothing else changes byte for byte, and synthetic acceptance 3: scenario "Two identical runs log the same events without their *_ms keys and keep the control records" runs Setup, Readiness.Check and a verification pass twice on the same stub project and compares the two whole logs with every `*_ms` key removed, and compares the stamp, the readiness record and the Pass JSON with the control bytes captured on the unchanged tree (the stub project's HEAD, whose commit time varies, is written `<head>`). Every scenario also compares the exit codes, errors and Progress text with the control.
+- Test-scope qualification for synthetic acceptance 3: besides removing `*_ms` keys, the log comparison removes the `ms` key of the existing `step_sweep` events and the random suffix of Kogen's scratch directory names (`kogen-verify-<hex>`), both of which already differ between identical runs on the unchanged tree. Neither is renamed or changed; this Intent changes no sweep behavior.
+- Addressed: synthetic acceptance 4, scenario "A readiness run without setup commands logs neither event" (Readiness.Check and two reuse Setup calls with no setup commands log no event at all).
+- Addressed: required slug, step-file name and step-sentence prefix are kept exactly. No requested behavior is omitted or superseded.
+
+## Tests
+- A readiness setup command_result carries integer wall_ms for a passing and a failing command, without changing the refusal: extend the Setup tests in `verify/readiness_test.go` with a `memLog` asserting `wall_ms` on `setup-1` (`sleep 1`) and the failing command, plus the acceptance scenario (integration)
+- A cancelled or timed-out setup command still writes its command_result with wall_ms and returns the same error: new Go test in `verify/readiness_test.go` with a deadline over `sleep 30`, plus the acceptance scenario (regression)
+- A stamp match with reuse logs one setup_skipped with reason already_ran and the command count, and no command events: update `TestSetupRunsInOrderAndWarmPreparationReusesItsStamp` with a `memLog`, plus the acceptance scenarios (integration)
+- No setup commands logs neither event, also on a stamp match: Go test in `verify/readiness_test.go` plus the acceptance scenario (integration)
+- Pass JSON, readiness records, stamps, exit codes and Progress text stay byte-identical: existing readiness/pass tests and Elixir goldens unchanged, plus the acceptance control comparison (existing)
+
+## Feasibility
+- A scratch driver compiled into the verify test binary with `go test -c -overlay` (no checkout change) ran every acceptance case on the unchanged tree and produced the control bytes embedded in the feature; a cancelled `runStep` under a one-second deadline reported `started=true`, wall 1104 ms and `context deadline exceeded`, so the existing timing mechanism already observes a cancelled setup command. On the unchanged tree the new wall-time and setup_skipped assertions fail and the unchanged-behavior assertions (calls, progress, stamp, record, Pass JSON, masked log equality, empty setup) pass.
+- evidence: {"id":"setup-wall-observer","kind":"observer","inputs":["features/steps/k-verify-readiness-setup-wall-ms__steps.js"],"observers":["features/steps/k-verify-readiness-setup-wall-ms__steps.js"],"checks":[{"name":"good","command":"node features/steps/k-verify-readiness-setup-wall-ms__steps.js good","exit":0,"output":"good controls accepted\n"},{"name":"bad","command":"node features/steps/k-verify-readiness-setup-wall-ms__steps.js bad","exit":1,"output":"bad controls rejected\n"}]}
