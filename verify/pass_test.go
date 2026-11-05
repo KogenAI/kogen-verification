@@ -347,3 +347,31 @@ func TestMaintainedFeatureRoundTrip(t *testing.T) {
 		t.Fatalf("round trip bytes: %s != %s: %v", data, data2, err)
 	}
 }
+
+func TestExecutionOrderNeverNullWhenEmitted(t *testing.T) {
+	b, err := json.Marshal(Pass{PulledForward: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"execution_order":[]`) || !strings.Contains(string(b), `"pulled_forward":[]`) {
+		t.Fatalf("constructed: %s", b)
+	}
+	var p Pass
+	if err := json.Unmarshal([]byte(`{"n":1,"clean":true,"green":true,"tree":"t","checks":[],"moved":[],"failing":[],"setup":[],"not_run":[],"acceptance":"not_run","model":"none","pulled_forward":["C"]}`), &p); err != nil {
+		t.Fatal(err)
+	}
+	b, err = json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"execution_order":[]`) || !strings.Contains(string(b), `"pulled_forward":["C"]`) {
+		t.Fatalf("decoded: %s", b)
+	}
+	b, err = json.Marshal(Pass{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "execution_order") || strings.Contains(string(b), "pulled_forward") {
+		t.Fatalf("ordinary record: %s", b)
+	}
+}

@@ -62,6 +62,12 @@ func schedule(items []item, selected []string, deps map[string][]string) ([]item
 			}
 		}
 		if pick < 0 {
+			for i := range items {
+				if !done[i] {
+					order = append(order, items[i])
+					indices = append(indices, i)
+				}
+			}
 			break
 		}
 		done[pick] = true

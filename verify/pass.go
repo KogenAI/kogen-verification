@@ -134,7 +134,8 @@ func (p Pass) MarshalJSON() ([]byte, error) {
 		j.SpecUpdate = &u
 	}
 	if p.PulledForward != nil {
-		j.ExecutionOrder, j.PulledForward = &p.ExecutionOrder, &p.PulledForward
+		executionOrder := nonNil(p.ExecutionOrder)
+		j.ExecutionOrder, j.PulledForward = &executionOrder, &p.PulledForward
 	}
 	if p.UncoveredAcceptanceCount != nil {
 		j.UncoveredAcceptance = &p.UncoveredAcceptance

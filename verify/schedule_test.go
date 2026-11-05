@@ -36,3 +36,18 @@ func TestPulledForwardComparedWithDependencyOrder(t *testing.T) {
 		t.Fatalf("pulled = %v", pulled)
 	}
 }
+
+func TestScheduleCycleAppendsLeftoversInInputOrder(t *testing.T) {
+	items := []item{{name: "acceptance", kind: "acceptance"}, {name: "A", kind: "check"}, {name: "B", kind: "check"}, {name: "C", kind: "check"}}
+	deps := map[string][]string{"A": {"B"}, "B": {"A"}}
+	for _, selected := range [][]string{nil, {"B"}} {
+		got, _ := schedule(items, selected, deps)
+		var names []string
+		for _, it := range got {
+			names = append(names, it.name)
+		}
+		if want := []string{"acceptance", "C", "A", "B"}; !reflect.DeepEqual(names, want) {
+			t.Fatalf("selected %v: got %v, want %v", selected, names, want)
+		}
+	}
+}

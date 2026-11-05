@@ -202,3 +202,45 @@ func TestCustomChecksAndOverridesKeepHandoffs(t *testing.T) {
 		})
 	}
 }
+
+func dependencyCohortPass(t *testing.T, deps map[string][]string) Pass {
+	t.Helper()
+	p := newProj(t)
+	aux := t.TempDir()
+	bin := filepath.Join(aux, "bin")
+	if err := os.Mkdir(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	vetStarted := shellQuote(filepath.Join(aux, "vet-started"))
+	script := "#!/bin/sh\nif test \"$1\" = vet; then touch " + vetStarted + "; exit 0; fi\ni=0; while ! test -f " + vetStarted + "; do i=$((i+1)); test $i -lt 200 || exit 90; sleep .01; done\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	p.Env = append(p.Env, "PATH="+bin+":"+os.Getenv("PATH"))
+	p.Config.Checks = []project.Check{{Name: "build", Run: "go build ./..."}, {Name: "vet", Run: "go vet ./..."}}
+	in := p.input(1)
+	in.Dependencies = deps
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pass, err := Verify(ctx, sys.NewWith(p.Env, p.Root), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pass
+}
+
+func TestDependenciesJoiningNoChecksKeepCohortConcurrent(t *testing.T) {
+	for _, deps := range []map[string][]string{nil, {"vet": {"acceptance"}}, {"vet": {"unknown"}}} {
+		pass := dependencyCohortPass(t, deps)
+		if !pass.Green || len(pass.Checks) != 2 || len(pass.NotRun) != 0 || len(pass.Speculative) != 0 {
+			t.Fatalf("dependencies %v: %+v", deps, pass)
+		}
+	}
+}
+
+func TestDependencyBetweenChecksKeepsThemSequential(t *testing.T) {
+	pass := dependencyCohortPass(t, map[string][]string{"vet": {"build"}})
+	if pass.Green || len(pass.Checks) != 1 || pass.Checks[0].Name != "build" || pass.Checks[0].Status != 90 || !reflect.DeepEqual(pass.NotRun, []string{"vet"}) || len(pass.Speculative) != 0 {
+		t.Fatalf("pass: %+v", pass)
+	}
+}

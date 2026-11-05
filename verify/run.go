@@ -166,6 +166,18 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 	ordinary, _ := schedule(items, nil, in.Dependencies)
 	items, pulled := schedule(items, in.PreviousRed, in.Dependencies)
 	effective := !slices.EqualFunc(items, ordinary, func(a, b item) bool { return a.name == b.name })
+	checkNames := map[string]bool{}
+	for _, it := range items {
+		if it.kind == "check" {
+			checkNames[it.name] = true
+		}
+	}
+	checkDependency := false
+	for name, prerequisites := range in.Dependencies {
+		if checkNames[name] && slices.ContainsFunc(prerequisites, func(prerequisite string) bool { return checkNames[prerequisite] }) {
+			checkDependency = true
+		}
+	}
 
 	reportDir, err := os.MkdirTemp("", "kogen-check-reports-")
 	if err != nil {
@@ -241,7 +253,7 @@ func Verify(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 			if checksStart.IsZero() {
 				checksStart = time.Now()
 			}
-			if !effective && len(in.Dependencies) == 0 && in.Stage == nil && it.kind == "check" && independentGo(it.command, s) && attemptFrom(ctx) == nil {
+			if !effective && !checkDependency && in.Stage == nil && it.kind == "check" && independentGo(it.command, s) && attemptFrom(ctx) == nil {
 				end := index + 1
 				for end < len(items) && items[end].kind == "check" && independentGo(items[end].command, s) {
 					end++
