@@ -97,6 +97,7 @@ type Pass struct {
 type passJSON struct {
 	ExecutionOrder           *[]string                 `json:"execution_order,omitempty"`
 	PulledForward            *[]string                 `json:"pulled_forward,omitempty"`
+	DependencyReordered      bool                      `json:"dependency_reordered,omitempty"`
 	UncoveredAcceptance      *[]string                 `json:"uncovered_acceptance,omitempty"`
 	UncoveredAcceptanceCount *int                      `json:"uncovered_acceptance_count,omitempty"`
 	N                        int                       `json:"n"`
@@ -133,6 +134,7 @@ func (p Pass) MarshalJSON() ([]byte, error) {
 		u.ImplementationChanged, u.SpecsChanged, u.SpecsUnchanged = nonNil(u.ImplementationChanged), nonNil(u.SpecsChanged), nonNil(u.SpecsUnchanged)
 		j.SpecUpdate = &u
 	}
+	j.DependencyReordered = p.dependencyReordered
 	if p.PulledForward != nil {
 		executionOrder := nonNil(p.ExecutionOrder)
 		j.ExecutionOrder, j.PulledForward = &executionOrder, &p.PulledForward
@@ -179,6 +181,7 @@ func (p *Pass) UnmarshalJSON(data []byte) error {
 	var j struct {
 		ExecutionOrder           []string                  `json:"execution_order"`
 		PulledForward            []string                  `json:"pulled_forward"`
+		DependencyReordered      bool                      `json:"dependency_reordered"`
 		UncoveredAcceptance      []string                  `json:"uncovered_acceptance"`
 		UncoveredAcceptanceCount *int                      `json:"uncovered_acceptance_count"`
 		N                        int                       `json:"n"`
@@ -201,7 +204,7 @@ func (p *Pass) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &j); err != nil {
 		return err
 	}
-	*p = Pass{ExecutionOrder: j.ExecutionOrder, PulledForward: j.PulledForward, N: j.N, Clean: j.Clean, Green: j.Green, Tree: j.Tree, Setup: j.Setup, Checks: j.Checks,
+	*p = Pass{dependencyReordered: j.DependencyReordered, ExecutionOrder: j.ExecutionOrder, PulledForward: j.PulledForward, N: j.N, Clean: j.Clean, Green: j.Green, Tree: j.Tree, Setup: j.Setup, Checks: j.Checks,
 		Speculative: j.Speculative, Cancelled: j.Cancelled, NotRun: j.NotRun, Moved: j.Moved, Failing: j.Failing, MaintainedModels: j.MaintainedModels, MaintainedFeatures: j.MaintainedFeatures, SpecUpdate: j.SpecUpdate}
 	p.UncoveredAcceptance, p.UncoveredAcceptanceCount = j.UncoveredAcceptance, j.UncoveredAcceptanceCount
 	_, hasSetup := present["setup"]

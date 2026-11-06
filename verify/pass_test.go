@@ -375,3 +375,22 @@ func TestExecutionOrderNeverNullWhenEmitted(t *testing.T) {
 		t.Fatalf("ordinary record: %s", b)
 	}
 }
+
+func TestDependencyReorderedKeyIsWrittenOnlyWhenSet(t *testing.T) {
+	record := `{"dependency_reordered":true,"n":1,"clean":true,"green":true,"tree":"t","setup":[],"acceptance":"not_run","model":"none","checks":[],"not_run":[],"moved":[],"failing":[]}`
+	var p Pass
+	if err := json.Unmarshal([]byte(record), &p); err != nil {
+		t.Fatal(err)
+	}
+	if !p.dependencyReordered {
+		t.Fatalf("flag not restored: %+v", p)
+	}
+	b, err := json.Marshal(p)
+	if err != nil || string(b) != record {
+		t.Fatalf("re-marshalled: %s != %s: %v", b, record, err)
+	}
+	b, err = json.Marshal(Pass{})
+	if err != nil || strings.Contains(string(b), "dependency_reordered") {
+		t.Fatalf("ordinary record: %s: %v", b, err)
+	}
+}

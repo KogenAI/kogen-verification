@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -99,5 +100,20 @@ func TestDeclaredDependenciesWithoutPriorityComplete(t *testing.T) {
 	}
 	if !pass.Green || !pass.Complete(p.Config, mustScenarios(t), nil) || pass.ExecutionOrder != nil {
 		t.Fatalf("dependency-ordered pass: %+v", pass)
+	}
+	record, err := json.Marshal(pass)
+	if err != nil || !strings.Contains(string(record), `"dependency_reordered":true`) {
+		t.Fatalf("record: %s: %v", record, err)
+	}
+	var reloaded Pass
+	if err := json.Unmarshal(record, &reloaded); err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.Complete(p.Config, mustScenarios(t), nil) {
+		t.Fatalf("reloaded dependency-ordered pass is not complete: %s", record)
+	}
+	again, err := json.Marshal(reloaded)
+	if err != nil || string(again) != string(record) {
+		t.Fatalf("re-marshalled record: %s != %s: %v", again, record, err)
 	}
 }
