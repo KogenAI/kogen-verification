@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -70,6 +71,81 @@ func TestWallTimeStageAndMaintainedFeature(t *testing.T) {
 	}
 }
 
+// setupClock is a context whose deadline starts with the first setup command: once armed it
+// ends with context.DeadlineExceeded after its budget; it also ends when its parent does.
+type setupClock struct {
+	parent context.Context
+	done   chan struct{}
+	once   sync.Once
+	mu     sync.Mutex
+	err    error
+	end    time.Time
+}
+
+func newSetupClock(parent context.Context) *setupClock {
+	c := &setupClock{parent: parent, done: make(chan struct{})}
+	context.AfterFunc(parent, func() { c.stop(parent.Err()) })
+	return c
+}
+
+func (c *setupClock) arm(budget time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.end.IsZero() {
+		return
+	}
+	c.end = time.Now().Add(budget)
+	time.AfterFunc(budget, func() { c.stop(context.DeadlineExceeded) })
+}
+
+func (c *setupClock) armed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.end.IsZero()
+}
+
+func (c *setupClock) stop(err error) {
+	c.once.Do(func() {
+		c.mu.Lock()
+		c.err = err
+		c.mu.Unlock()
+		close(c.done)
+	})
+}
+
+func (c *setupClock) Deadline() (time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.end.IsZero() {
+		return c.end, true
+	}
+	return c.parent.Deadline()
+}
+
+func (c *setupClock) Done() <-chan struct{} { return c.done }
+
+func (c *setupClock) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
+}
+
+func (c *setupClock) Value(key any) any { return c.parent.Value(key) }
+
+// setupStartLog is a memLog that arms clock when the first setup command starts.
+type setupStartLog struct {
+	*memLog
+	clock  *setupClock
+	budget time.Duration
+}
+
+func (l setupStartLog) Log(event map[string]any) {
+	l.memLog.Log(event)
+	if event["event"] == "command" && event["name"] == "setup-1" {
+		l.clock.arm(l.budget)
+	}
+}
+
 func TestWallTimeDeadlineAndNeverStarted(t *testing.T) {
 	p := newProj(t)
 	p.Config.Setup = []string{"sleep 30", "echo never"}
@@ -80,16 +156,22 @@ func TestWallTimeDeadlineAndNeverStarted(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Env = append(s.Env, "PATH="+bin)
-	log := &memLog{}
+	// The 300 ms deadline starts when setup-1 starts, so the work before it does not use the
+	// budget; the 30 s fallback ends a run whose first setup command never starts.
+	fallback, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	clock := newSetupClock(fallback)
+	log := setupStartLog{memLog: &memLog{}, clock: clock, budget: 300 * time.Millisecond}
 	in := p.input(1)
 	in.Log = log
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	_, err := Verify(ctx, s, in)
+	_, err := Verify(clock, s, in)
+	if !clock.armed() {
+		t.Fatalf("setup-1 never started before the 30s fallback deadline: %v", err)
+	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deadline: %v", err)
 	}
-	aborted := requireAborted(t, log, "timeout")
+	aborted := requireAborted(t, log.memLog, "timeout")
 	eq(t, "item", aborted["item"], "setup-1")
 	events := log.named("command_result")
 	requireWall(t, events, "setup-1")
