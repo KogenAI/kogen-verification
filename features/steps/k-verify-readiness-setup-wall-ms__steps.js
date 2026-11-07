@@ -107,7 +107,7 @@ function goodReports() {
   const failing = {
     case: 'failing', head: 'H',
     runs: [{
-      calls: [{ call: 'check', error: { class: 'environment', detail: 'Setup setup-2 failed (status=4).', exit: 3, lines: [''], reason: 'setup_failed' }, progress: 'kogen: running setup-1: sleep 1\nkogen: running setup-2: exit 4\n', record: null }],
+      calls: [{ call: 'check', error: { class: 'environment', detail: 'Setup setup-2 failed (status=4).', exit: 3, lines: ['', 'commands.setup[1]: exit 4', 'next: fix commands.setup in .kogen/project.yaml (commit the change) or install what the command needs, then rerun the command that was refused'], reason: 'setup_failed' }, progress: 'kogen: running setup-1: sleep 1\nkogen: running setup-2: exit 4\n', record: null }],
       events: [command('setup-1', 'sleep 1'), sweep('setup-1', 6), result('setup-1', 0, 1004), command('setup-2', 'exit 4'), sweep('setup-2', 3), result('setup-2', 4, 3)],
     }],
   };

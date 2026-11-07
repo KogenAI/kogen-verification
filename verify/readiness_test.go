@@ -161,7 +161,7 @@ func TestReadinessRefusals(t *testing.T) {
 			rep := writeReport(t, p.Aux, "skipped.ndjson", simpleMessages(project.FeaturePath(fixtureSlug), ex, reportOpts{results: statuses("SKIPPED")}))
 			runner(p, "cp '"+rep+"' \"$KOGEN_ACCEPTANCE_REPORT\"")
 		}, "intent", "not_ready", "the Intent is not ready to build", prefixed("skipped: First (line 2)", "skipped: Later (line 4)")},
-		{"setup fails", func(p *proj) { p.Config.Setup = []string{"echo before; echo setup-bad; exit 3"} }, "environment", "setup_failed", "Setup setup-1 failed (status=3).", one2("before", "setup-bad")},
+		{"setup fails", func(p *proj) { p.Config.Setup = []string{"echo before; echo setup-bad; exit 3"} }, "environment", "setup_failed", "Setup setup-1 failed (status=3).", one2("before", "setup-bad", "commands.setup[0]: echo before; echo setup-bad; exit 3", setupNext)},
 		{"setup changes the candidate", func(p *proj) { p.Config.Setup = []string{"echo changed > app.txt; echo added > added.txt"} }, "intent", "not_ready", "readiness changed candidate files", func(t *testing.T, l []string) {
 			slices.Sort(l)
 			eqSlice(t, "mutations", l, []string{"added.txt", "app.txt"})
@@ -194,6 +194,8 @@ func TestReadinessRefusals(t *testing.T) {
 		})
 	}
 }
+
+const setupNext = "next: fix commands.setup in .kogen/project.yaml (commit the change) or install what the command needs, then rerun the command that was refused"
 
 func one2(want ...string) func(*testing.T, []string) {
 	return func(t *testing.T, lines []string) { eqSlice(t, "lines", lines, want) }
@@ -465,13 +467,30 @@ func TestSetupFailureStopsAtTheFirstFailedCommandWithItsLastLines(t *testing.T) 
 	e := failWith(t, err, "environment", "setup_failed")
 	eq(t, "detail", e.Detail, "Setup setup-1 failed (status=9).")
 	eq(t, "exit", e.Exit, 3)
-	eq(t, "lines", len(e.Lines), 20)
-	eq(t, "last line", e.Lines[19], "30")
+	eq(t, "lines", len(e.Lines), 22)
 	eq(t, "first line", e.Lines[0], "11")
+	eq(t, "last tail line", e.Lines[19], "30")
+	eq(t, "command line", e.Lines[20], "commands.setup[0]: seq 1 30; exit 9")
+	eq(t, "next line", e.Lines[21], setupNext)
 	eqSlice(t, "later setup", p.ran("later"), nil)
 	if fileExists(filepath.Join(p.Root, ".kogen/local/setup.json")) {
 		t.Fatal("a failed setup leaves no stamp")
 	}
+}
+
+func TestSetupFailureOfAMissingProgramSaysItWasNotFound(t *testing.T) {
+	isolateTmp(t)
+	p := newProj(t)
+	p.Config.Setup = []string{"definitely-not-a-program --x"}
+	s, _ := p.session()
+	err := p.readiness().Setup(context.Background(), s, p.Root, false)
+	e := failWith(t, err, "environment", "setup_failed")
+	eq(t, "detail", e.Detail, "Setup setup-1 failed (status=127).")
+	eq(t, "exit", e.Exit, 3)
+	eq(t, "lines", len(e.Lines), 3)
+	contains(t, "output", e.Lines[0], "definitely-not-a-program")
+	eq(t, "command line", e.Lines[1], "commands.setup[0]: definitely-not-a-program --x")
+	eq(t, "next line", e.Lines[2], "next: the program was not found; "+strings.TrimPrefix(setupNext, "next: "))
 }
 
 // ExUnit: refinement_test.exs, a runner failure after passing scenarios.

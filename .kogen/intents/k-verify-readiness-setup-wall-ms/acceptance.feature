@@ -12,7 +12,7 @@ Feature: Readiness setup records its wall time and a skipped setup
       """
     And k-verify-readiness-setup-wall-ms: run 1 makes these calls:
       """
-      [{"call":"check","error":{"class":"environment","detail":"Setup setup-2 failed (status=4).","exit":3,"lines":[""],"reason":"setup_failed"},"progress":"kogen: running setup-1: sleep 1\nkogen: running setup-2: exit 4\n","record":null}]
+      [{"call":"check","error":{"class":"environment","detail":"Setup setup-2 failed (status=4).","exit":3,"lines":["","commands.setup[1]: exit 4","next: fix commands.setup in .kogen/project.yaml (commit the change) or install what the command needs, then rerun the command that was refused"],"reason":"setup_failed"},"progress":"kogen: running setup-1: sleep 1\nkogen: running setup-2: exit 4\n","record":null}]
       """
 
   Scenario: A cancelled readiness setup command still records its wall time until cancellation

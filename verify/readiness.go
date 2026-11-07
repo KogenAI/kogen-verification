@@ -662,6 +662,11 @@ func (r *Readiness) Setup(ctx context.Context, s *sys.Session, root string, reus
 			} else {
 				e.Lines = strings.Split(Tail(res.Output, 20), "\n")
 			}
+			next := "fix commands.setup in .kogen/project.yaml (commit the change) or install what the command needs, then rerun the command that was refused"
+			if res.Status == 127 {
+				next = "the program was not found; " + next
+			}
+			e.Lines = append(e.Lines, fmt.Sprintf("commands.setup[%d]: %s", i, r.Attempt.Redact(cmd)), "next: "+next)
 			return e
 		}
 	}

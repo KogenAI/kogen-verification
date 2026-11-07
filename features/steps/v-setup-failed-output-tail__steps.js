@@ -42,16 +42,19 @@ const observe = {
 
 const FAILED = 'environment/setup_failed: Setup setup-2 failed (status=134).';
 const TAIL = Array.from({ length: 20 }, (_, i) => String(i + 11));
+const NEXT = 'next: fix commands.setup in .kogen/project.yaml (commit the change) or install what the command needs, then rerun the command that was refused';
+const added = (command) => ['commands.setup[1]: ' + command, NEXT];
 
 // goodReports are the outcomes the driver wrote for these setups on the unchanged tree.
 function goodReports() {
   return {
-    plain: { message: FAILED, exit: 3, lines: ['boom'] },
+    plain: { message: FAILED, exit: 3, lines: ['boom', ...added("sh -c 'echo boom >&2; kill -ABRT $$'")] },
     attempt: {
       message: FAILED,
       exit: 3,
       lines: [
         'boom',
+        ...added("sh -c 'echo boom >&2; kill -ABRT $$'"),
         'Steps that ran, with wall time (each step has its own 120s limit):',
         '  snapshot: passed in 0.0s',
         '  materialize: passed in 0.1s',
@@ -62,22 +65,22 @@ function goodReports() {
         'Evidence: /Users/kogen-runner/work.noindex/scratch/delivery/t1105/go/TestVSetupFailedOutputTailDriver3919551303/002/.kogen/local/readiness/attempts/fixture-20261105T135801Z-7d4fcbb2/attempt.json',
       ],
     },
-    both: { message: FAILED, exit: 3, lines: ['out', 'err'] },
-    tail: { message: FAILED, exit: 3, lines: TAIL.slice() },
+    both: { message: FAILED, exit: 3, lines: ['out', 'err', ...added('echo out; echo err >&2; kill -ABRT $$')] },
+    tail: { message: FAILED, exit: 3, lines: [...TAIL, ...added('seq 1 30 >&2; kill -ABRT $$')] },
   };
 }
 
 function judge(x) {
   observe.outcome(x.plain, FAILED);
-  observe.exactly(x.plain, ['boom']);
+  observe.exactly(x.plain, ['boom', ...added("sh -c 'echo boom >&2; kill -ABRT $$'")]);
   observe.contains(x.plain, 'boom');
   observe.outcome(x.attempt, FAILED);
   observe.startsWith(x.attempt, ['boom']);
   observe.contains(x.attempt, 'boom');
   observe.outcome(x.both, FAILED);
-  observe.exactly(x.both, ['out', 'err']);
+  observe.exactly(x.both, ['out', 'err', ...added('echo out; echo err >&2; kill -ABRT $$')]);
   observe.outcome(x.tail, FAILED);
-  observe.exactly(x.tail, TAIL);
+  observe.exactly(x.tail, [...TAIL, ...added('seq 1 30 >&2; kill -ABRT $$')]);
 }
 
 function controls(bad) {
