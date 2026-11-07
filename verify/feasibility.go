@@ -278,6 +278,7 @@ func execute(ctx context.Context, s *sys.Session, tools Tools, root string, inte
 		return nil, err
 	}
 	var results []Obligation
+	var omittedByCheck [][][]string
 	for _, d := range ds {
 		id, err := identity(root, d)
 		if err != nil {
@@ -291,6 +292,7 @@ func execute(ctx context.Context, s *sys.Session, tools Tools, root string, inte
 			bound[p] = h
 		}
 		id.Checks = []CheckResult{}
+		var omittedChecks [][]string
 		for _, c := range d.Checks {
 			r, err := probed(ev, func() (ProbeResult, error) {
 				return Probe{Root: root, Command: c.Command, Inputs: bound, Tools: tools, Log: log}.Run(ctx, s)
@@ -301,8 +303,10 @@ func execute(ctx context.Context, s *sys.Session, tools Tools, root string, inte
 			actual := CheckResult{Name: c.Name, Command: c.Command, Exit: r.Status, TimedOut: r.TimedOut, Output: r.Output, InputChanges: r.InputChanges}
 			record(ev, map[string]any{"event": "feasibility_check", "obligation": generic(map[string]any{"id": id.ID, "kind": id.Kind, "inputs": id.Inputs, "observers": id.Observers}), "check": generic(actual)})
 			id.Checks = append(id.Checks, actual)
+			omittedChecks = append(omittedChecks, r.omittedEnv)
 		}
 		results = append(results, id)
+		omittedByCheck = append(omittedByCheck, omittedChecks)
 	}
 	if len(results) > 0 {
 		path := filepath.Join(evidenceRoot, ".kogen/local/readiness", intent.Slug+"-feasibility.ndjson")
@@ -323,6 +327,8 @@ func execute(ctx context.Context, s *sys.Session, tools Tools, root string, inte
 	}
 	if !Valid(root, intent, results) {
 		var problems []string
+		omitted := map[string]bool{}
+		outputMismatch := false
 		for i, d := range ds {
 			for j, expected := range d.Checks {
 				actual := results[i].Checks[j]
@@ -330,12 +336,26 @@ func execute(ctx context.Context, s *sys.Session, tools Tools, root string, inte
 				if jsonEqual(withTimedOut(d.raw[j]), got) {
 					continue
 				}
+				if actual.Output != expected.Output {
+					outputMismatch = true
+					for _, name := range omittedByCheck[i][j] {
+						omitted[name] = true
+					}
+				}
 				detail := d.ID + "/" + expected.Name + ": expected " + encode(d.raw[j]) + "; actual " + encode(got)
 				if shape && actual.TimedOut {
 					detail = fmt.Sprintf("%s/%s: command exceeded the %d-second limit (observers: %v); ", d.ID, expected.Name, int(ProbeTimeout/time.Second), d.Observers) + detail
 				}
 				problems = append(problems, detail)
 			}
+		}
+		if outputMismatch {
+			names := make([]string, 0, len(omitted))
+			for name := range omitted {
+				names = append(names, name)
+			}
+			slices.Sort(names)
+			problems = append([]string{"probes run under a restricted environment; caller variables omitted: " + strings.Join(names, ", ")}, problems...)
 		}
 		e := sys.Fail("intent", "not_ready", "declared feasibility evidence failed", 1)
 		e.Lines = strings.Split(Cut(strings.Join(problems, "\n")), "\n")

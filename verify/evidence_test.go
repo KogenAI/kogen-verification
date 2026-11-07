@@ -641,3 +641,72 @@ func renderErr(err error) string {
 	}
 	return err.Error()
 }
+
+func TestDeclaredProbeEnvironmentMismatch(t *testing.T) {
+	isolateTmp(t)
+	p := newProj(t)
+	p.write("check.txt", "fixture")
+	home := t.TempDir()
+	mix := filepath.Join(home, "mix")
+	hex := filepath.Join(home, "hex")
+	for _, dir := range []string{mix, hex} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const secret = "synthetic-credential-7f91"
+	s := sys.NewWith([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=/caller/tmp", "MIX_HOME=" + mix, "HEX_HOME=" + hex, "MISE_DATA_DIR=/caller/mise", "MISE_TRUSTED_CONFIG_PATHS=/caller/trusted", "KOGEN_NODE=/caller/node", "REPORTER=0", "SECRET_TOKEN_X=" + secret, "REPORTER=0"}, p.Root)
+	cases := []struct {
+		command, expected, actual string
+		mismatch                  bool
+	}{
+		{`if [ "${REPORTER+x}" = x ]; then echo runs; else echo tests; fi`, "runs\n", "tests\n", true},
+		{`if [ "${REPORTER+x}" = x ]; then echo runs; else echo tests; fi`, "tests\n", "tests\n", false},
+		{`echo stable`, "stable\n", "stable\n", false},
+		{`echo "${REPORTER:-unset}"`, "unset\n", "unset\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.expected+tc.command, func(t *testing.T) {
+			p.setFeasibility(capability("reporter", tc.command, 0, tc.expected, "check.txt"))
+			ev := newEvidence()
+			log := &memLog{}
+			// Exercise the same executor with its real run logger enabled.
+			_, err := execute(context.Background(), s, Tools{Node: "/tool/node"}, p.Root, p.Intent, p.Root, ev, false, log)
+			text := ""
+			if tc.mismatch {
+				e := failWith(t, err, "intent", "not_ready")
+				text = e.Render()
+				contains(t, "diagnostic", text, "probes run under a restricted environment; caller variables omitted: REPORTER, SECRET_TOKEN_X")
+				contains(t, "expected", text, `"output":"runs\n"`)
+				contains(t, "actual", text, `"output":"tests\n"`)
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if len(log.events) == 0 {
+				t.Fatal("probe run logs missing")
+			}
+			retained := p.retained()
+			last := retained[len(retained)-1]
+			got := last["checks"].([]any)[0].(map[string]any)["output"].(string)
+			eq(t, "retained output", got, tc.actual)
+			for _, value := range []string{text, encode(log.events), encode(ev.events), encode(last)} {
+				if strings.Contains(value, secret) {
+					t.Fatalf("credential disclosed: %s", value)
+				}
+			}
+		})
+	}
+}
+
+func TestDeclaredProbeExitMismatchHasNoEnvironmentExplanation(t *testing.T) {
+	isolateTmp(t)
+	p := newProj(t)
+	p.write("check.txt", "fixture")
+	p.setFeasibility(capability("exit", "echo stable", 1, "stable\n", "check.txt"))
+	s, _ := p.session()
+	_, err := Execute(context.Background(), s, Tools{}, p.Root, p.Intent, p.Root, nil)
+	e := failWith(t, err, "intent", "not_ready")
+	if strings.Contains(e.Render(), "restricted environment") {
+		t.Fatalf("unexpected environment explanation: %s", e.Render())
+	}
+}

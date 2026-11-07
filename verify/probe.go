@@ -29,6 +29,7 @@ type ProbeResult struct {
 	Output       string   `json:"output"`
 	Wall         float64  `json:"wall"`
 	InputChanges []string `json:"input_changes,omitempty"`
+	omittedEnv   []string
 }
 
 // ProbeTimeout is how long a probe may run (SHP-10).
@@ -342,7 +343,7 @@ func (pr Probe) Run(ctx context.Context, s *sys.Session) (ProbeResult, error) {
 		}
 		output += "probe copy has no git metadata: scratch-copy isolation, not evidence that the source project lacks a repository\n"
 	}
-	result := ProbeResult{Status: r.Status, TimedOut: r.TimedOut, Output: output, Wall: wall, InputChanges: changes}
+	result := ProbeResult{Status: r.Status, TimedOut: r.TimedOut, Output: output, Wall: wall, InputChanges: changes, omittedEnv: omittedProbeEnv(s.Env, penv, env)}
 	if observer != nil {
 		group := 0
 		for _, g := range ps.Groups() {
@@ -451,6 +452,31 @@ func probeEnv(s *sys.Session, scratch, home, runTmp, hexHome string) []string {
 	}
 	env = append(env, "TMPDIR="+runTmp, "MISE_TRUSTED_CONFIG_PATHS="+trusted)
 	return append(env, "HOME="+home)
+}
+
+// omittedProbeEnv compares names, not values, with the environment actually used.
+func omittedProbeEnv(caller, effective []string, overrides map[string]string) []string {
+	present := map[string]bool{}
+	for _, entry := range effective {
+		if name, _, ok := strings.Cut(entry, "="); ok {
+			present[name] = true
+		}
+	}
+	for name := range overrides {
+		present[name] = true
+	}
+	omitted := map[string]bool{}
+	for _, entry := range caller {
+		if name, _, ok := strings.Cut(entry, "="); ok && !present[name] {
+			omitted[name] = true
+		}
+	}
+	names := make([]string, 0, len(omitted))
+	for name := range omitted {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 // followInterrupt carries the caller session's interrupt to the probe's own session, whose
