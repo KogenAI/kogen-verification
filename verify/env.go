@@ -2,6 +2,7 @@ package verify
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,23 +15,69 @@ import (
 // Commands get them as KOGEN_NODE, KOGEN_QUINT and KOGEN_CUCUMBER next to the caller's
 // environment. Quint always runs on this Node, never on the caller's PATH.
 type Tools struct {
-	Node     string // the node executable
-	Quint    string // quint's cli.js
-	Cucumber string // the node_modules folder holding @cucumber/cucumber
+	Node      string // the node executable
+	Quint     string // quint's cli.js
+	Cucumber  string // the node_modules folder holding @cucumber/cucumber
+	nodePath  string
+	nodeCause string
 }
 
-// ToolsFromInstall resolves the tools of an installed Kogen: installRoot/node-path names the
-// Node (the file's own path when unreadable), Quint and Cucumber live under installRoot/lib.
+// ToolsFromInstall resolves the tools recorded by an installed Kogen.
 func ToolsFromInstall(installRoot string) Tools {
-	node := filepath.Join(installRoot, "node-path")
-	if b, err := os.ReadFile(node); err == nil {
-		node = strings.TrimSpace(string(b))
-	}
-	return Tools{
-		Node:     node,
+	path := filepath.Join(installRoot, "node-path")
+	t := Tools{nodePath: path,
 		Quint:    filepath.Join(installRoot, "lib/quint/node_modules/@informalsystems/quint/dist/src/cli.js"),
 		Cucumber: filepath.Join(installRoot, "lib/cucumber/node_modules"),
 	}
+	st, err := os.Stat(path)
+	switch {
+	case os.IsNotExist(err):
+		t.nodeCause = "node-path is missing"
+	case err != nil || st.Mode().Perm()&0444 == 0:
+		t.nodeCause = "node-path is unreadable"
+	default:
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.nodeCause = "node-path is unreadable"
+		} else {
+			t.Node = strings.TrimSpace(string(b))
+			if t.Node == "" {
+				t.nodeCause = "node-path is empty"
+			}
+		}
+	}
+	return t
+}
+
+// RequireInstall validates Kogen's installation before verification work.
+func (t Tools) RequireInstall(model bool) error {
+	cause := t.nodeCause
+	if cause == "" {
+		st, err := os.Stat(t.Node)
+		switch {
+		case err != nil:
+			cause = "node target is missing"
+		case !st.Mode().IsRegular():
+			cause = "node target is not regular"
+		case st.Mode().Perm()&0111 == 0:
+			cause = "node target is not executable"
+		}
+	}
+	if cause != "" {
+		detail := cause + " at node-path " + t.nodePath
+		if t.Node != "" {
+			detail += " (target " + t.Node + ")"
+		}
+		return sys.Fail("environment", "tool_missing", detail+"; reinstall Kogen", 3)
+	}
+	pkg := filepath.Join(t.Cucumber, "@cucumber/cucumber")
+	if st, err := os.Stat(pkg); err != nil || !st.IsDir() {
+		return sys.Fail("environment", "tool_missing", fmt.Sprintf("cucumber is not available at %s; reinstall Kogen", t.Cucumber), 3)
+	}
+	if model && !isRegular(t.Quint) {
+		return sys.Fail("environment", "tool_missing", "quint is not available at "+t.Quint+"; reinstall Kogen", 3)
+	}
+	return nil
 }
 
 func (t Tools) env() map[string]string {
@@ -45,7 +92,7 @@ func (t Tools) env() map[string]string {
 
 // Require refuses when Node or Quint is missing (VER-5).
 func (t Tools) Require() error {
-	if !isRegular(t.Node) {
+	if st, err := os.Stat(t.Node); err != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0111 == 0 {
 		return sys.Fail("environment", "tool_missing", "node is not available at "+t.Node+"; reinstall Kogen", 3)
 	}
 	if !isRegular(t.Quint) {

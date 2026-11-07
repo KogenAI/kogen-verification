@@ -183,6 +183,19 @@ func TestRealQuintTypecheckFailureIsNamedWithItsStatusAndOutput(t *testing.T) {
 func TestRealReadinessChecksTheModelWithQuintAndRecordsItsOutcome(t *testing.T) {
 	isolateTmp(t)
 	p, tools := realProject(t, "")
+	install := t.TempDir()
+	os.WriteFile(filepath.Join(install, "node-path"), []byte(" "+tools.Node+"\n"), 0644)
+	cucumber := filepath.Join(install, "lib/cucumber/node_modules")
+	quint := filepath.Join(install, "lib/quint/node_modules/@informalsystems/quint/dist/src/cli.js")
+	os.MkdirAll(filepath.Dir(cucumber), 0755)
+	os.MkdirAll(filepath.Dir(quint), 0755)
+	if err := os.Symlink(tools.Cucumber, cucumber); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(tools.Quint, quint); err != nil {
+		t.Fatal(err)
+	}
+	tools = ToolsFromInstall(install)
 	modelPath := project.ModelPath(fixtureSlug)
 	line := func(invs string) string {
 		return fmt.Sprintf("%s invariants=%s seed=7 samples=40 steps=12", modelPath, invs)
@@ -215,7 +228,7 @@ func TestRealReadinessChecksTheModelWithQuintAndRecordsItsOutcome(t *testing.T) 
 	r.Tools = Tools{Node: filepath.Join(p.Aux, "no-node"), Quint: tools.Quint}
 	_, err = r.Check(context.Background(), s, fixtureSlug)
 	e = failWith(t, err, "environment", "tool_missing")
-	eq(t, "detail", e.Detail, "node is not available at "+filepath.Join(p.Aux, "no-node")+"; reinstall Kogen")
+	contains(t, "detail", e.Detail, "node target is missing")
 }
 
 func TestRealProductRedTruncationReachesObservations(t *testing.T) {

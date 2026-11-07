@@ -141,11 +141,59 @@ func TestToolsFromInstallResolveNodeAndTheBundledTools(t *testing.T) {
 	eq(t, "node", got.Node, "/opt/node/bin/node")
 	eq(t, "quint", got.Quint, filepath.Join(root, "lib/quint/node_modules/@informalsystems/quint/dist/src/cli.js"))
 	eq(t, "cucumber", got.Cucumber, filepath.Join(root, "lib/cucumber/node_modules"))
-	eq(t, "unreadable node-path", ToolsFromInstall(t.TempDir()).Node[len(ToolsFromInstall(t.TempDir()).Node)-9:], "node-path")
+	eq(t, "missing node-path", ToolsFromInstall(t.TempDir()).Node, "")
 	e := failWith(t, got.Require(), "environment", "tool_missing")
 	eq(t, "detail", e.Detail, "node is not available at /opt/node/bin/node; reinstall Kogen")
 	node := filepath.Join(root, "node")
 	os.WriteFile(node, []byte("#!/bin/sh\n"), 0o755)
 	e = failWith(t, Tools{Node: node, Quint: filepath.Join(root, "q.js")}.Require(), "environment", "tool_missing")
 	eq(t, "detail", e.Detail, "quint is not available at "+filepath.Join(root, "q.js")+"; reinstall Kogen")
+}
+
+func TestInstallToolFailuresAndPriority(t *testing.T) {
+	root := t.TempDir()
+	np := filepath.Join(root, "node-path")
+	node := filepath.Join(root, "node")
+	pkg := filepath.Join(root, "lib/cucumber/node_modules/@cucumber/cucumber")
+	write := func(path, content string, mode os.FileMode) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(cause string, model bool) {
+		t.Helper()
+		tools := ToolsFromInstall(root)
+		e := failWith(t, tools.RequireInstall(model), "environment", "tool_missing")
+		if e.Exit != 3 || !strings.Contains(e.Detail, cause) || !strings.Contains(e.Detail, "reinstall Kogen") || (strings.HasPrefix(cause, "node") && !strings.Contains(e.Detail, np)) || (strings.HasPrefix(cause, "node target") && !strings.Contains(e.Detail, node)) {
+			t.Fatalf("detail: %+v", e)
+		}
+	}
+	check("node-path is missing", false)
+	write(np, "\n", 0644)
+	check("node-path is empty", false)
+	if err := os.Chmod(np, 0000); err != nil {
+		t.Fatal(err)
+	}
+	check("node-path is unreadable", false)
+	if got := ToolsFromInstall(root).Node; got != "" {
+		t.Fatalf("unreadable node-path exposed as Node: %q", got)
+	}
+	os.Chmod(np, 0644)
+	write(np, " \n"+node+"\n", 0644)
+	check("node target is missing", false)
+	os.Mkdir(node, 0755)
+	check("node target is not regular", false)
+	os.Remove(node)
+	write(node, "stub", 0644)
+	check("node target is not executable", false)
+	e := failWith(t, (Tools{Node: node}).Require(), "environment", "tool_missing")
+	contains(t, "direct Node", e.Detail, "node is not available")
+	os.Chmod(node, 0755)
+	check("cucumber", true)
+	os.MkdirAll(pkg, 0755)
+	check("quint", true)
+	if err := ToolsFromInstall(root).RequireInstall(false); err != nil {
+		t.Fatal(err)
+	}
 }

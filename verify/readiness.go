@@ -376,6 +376,9 @@ func (r *Readiness) checkClean(ctx context.Context, s *sys.Session, dir, slug st
 	if err != nil {
 		return nil, err
 	}
+	if err := r.Tools.RequireInstall(intent.Model != nil && !intent.Model.None); err != nil {
+		return nil, err
+	}
 	if a := r.Attempt; a != nil {
 		var plan []string
 		for i := range r.Config.Setup {
@@ -403,9 +406,6 @@ func (r *Readiness) checkClean(ctx context.Context, s *sys.Session, dir, slug st
 	}
 	var modelProblems []string
 	if m := intent.Model; m != nil && !m.None {
-		if err := r.Tools.Require(); err != nil {
-			return nil, err
-		}
 		res, err := CheckModel(ctx, s, dir, r.Tools, m, r.Evidence, nil)
 		if err != nil {
 			return nil, err

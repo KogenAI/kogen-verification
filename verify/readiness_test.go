@@ -17,7 +17,11 @@ import (
 )
 
 func (p *proj) readiness() *Readiness {
-	return &Readiness{Root: p.Root, Repo: p.Repo, Config: p.Config, Evidence: nil}
+	cucumber := filepath.Join(p.Aux, "node_modules")
+	os.MkdirAll(filepath.Join(cucumber, "@cucumber/cucumber"), 0755)
+	quint := filepath.Join(p.Aux, "quint.js")
+	os.WriteFile(quint, []byte("// fixture"), 0644)
+	return &Readiness{Root: p.Root, Repo: p.Repo, Config: p.Config, Tools: Tools{Node: "/bin/sh", Cucumber: cucumber, Quint: quint}, Evidence: nil}
 }
 
 func failWith(t *testing.T, err error, class, reason string) *sys.Error {
@@ -885,5 +889,59 @@ func TestDryRunProblemsNamesAcceptedFailuresOnlyWithASetupRefusal(t *testing.T) 
 	})
 	if got := dryRunProblems(Acceptance{Status: 1, Scenarios: slices.Delete(slices.Clone(scenarios), 1, 2)}); len(got) != 0 {
 		t.Fatalf("accepted red alone is not a problem: %v", got)
+	}
+}
+
+func TestReadinessInstallGateBeforeAcceptance(t *testing.T) {
+	p := newProj(t)
+	root := t.TempDir()
+	node := filepath.Join(root, "node")
+	np := filepath.Join(root, "node-path")
+	pkg := filepath.Join(root, "lib/cucumber/node_modules/@cucumber/cucumber")
+	if err := os.WriteFile(node, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(np, []byte(" \n"+node+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(pkg, 0755)
+	trace := p.trace("started")
+	p.Config.Acceptance.Run = `printf '%s' "$KOGEN_NODE" > ` + shellQuote(trace) + `; ` + p.Config.Acceptance.Run
+	r := p.readiness()
+	s, _ := p.session()
+	run := func(cause string) {
+		t.Helper()
+		r.Tools = ToolsFromInstall(root)
+		_, err := r.Check(context.Background(), s, fixtureSlug)
+		e := failWith(t, err, "environment", "tool_missing")
+		contains(t, "cause", e.Detail, cause)
+		if e.Exit != 3 || fileExists(trace) {
+			t.Fatalf("refusal or acceptance trace: %+v", e)
+		}
+	}
+	os.Remove(np)
+	os.RemoveAll(pkg)
+	run("node-path is missing")
+	os.WriteFile(np, []byte(node), 0644)
+	run("cucumber")
+	os.MkdirAll(pkg, 0755)
+	modelPath := project.ModelPath(fixtureSlug)
+	p.setModel(fmt.Sprintf("%s invariants=Safe seed=7 samples=40 steps=12", modelPath), map[string]string{modelPath: realModel})
+	run("quint")
+	p.setModel("not applicable — nothing to model", nil)
+	if err := os.WriteFile(np, []byte(" \n"+node+"\n "), 0644); err != nil {
+		t.Fatal(err)
+	}
+	r.Tools = ToolsFromInstall(root)
+	ready, err := r.Check(context.Background(), s, fixtureSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(trace)
+	if err != nil || string(b) != node {
+		t.Fatalf("KOGEN_NODE = %q, %v", b, err)
+	}
+	if ready.AcceptanceExit != 0 || len(ready.Scenarios) != 2 || ready.Failures() {
+		t.Fatalf("readiness: %+v", ready)
 	}
 }
