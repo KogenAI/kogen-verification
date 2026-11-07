@@ -15,6 +15,7 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-verification/prereq"
 )
 
 // testEnv is the process environment without Git's own variables, isolated from the
@@ -242,18 +243,19 @@ func findNode(t *testing.T) string {
 }
 
 // realTools are the Node, Quint and Cucumber of the repository's own node_modules
-// (testdata/tools/cucumber and testdata/tools/quint; `npm ci --prefix` there installs them).
+// (testdata/tools/cucumber and testdata/tools/quint; the setup command installs them).
 func realTools(t *testing.T) Tools {
 	t.Helper()
+	cucumber := prereq.Cucumber(t)
 	node := findNode(t)
 	root := moduleRoot(t)
 	tools := Tools{
 		Node:     node,
 		Quint:    filepath.Join(root, "testdata/tools/quint/node_modules/@informalsystems/quint/dist/src/cli.js"),
-		Cucumber: filepath.Join(root, "testdata/tools/cucumber/node_modules"),
+		Cucumber: cucumber,
 	}
-	if !isRegular(tools.Quint) || !isRegular(filepath.Join(tools.Cucumber, "@cucumber/cucumber/bin/cucumber.js")) {
-		t.Skip("run npm ci in testdata/tools/cucumber and testdata/tools/quint for the real Cucumber and Quint")
+	if !isRegular(tools.Quint) {
+		t.Skip("Quint is not installed; run the setup command: " + prereq.SetupCommand)
 	}
 	return tools
 }

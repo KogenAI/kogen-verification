@@ -6,18 +6,26 @@ It is a component of [Kogen](https://github.com/KogenAI/kogen), which pins an ex
 
 ## Packages
 
+- `prereq`: the lookup of the installed Cucumber that tests use (`prereq.Cucumber`).
+- `cmd/setup-tools`: the setup command that installs Cucumber and Quint for the tests.
 - `verify`: verification passes, readiness and feasibility checks, probes, the Cucumber and Quint tools, reports and evidence.
 
 ## Testing
 
-Go 1.27.2 and Node.js with npm are required. Some tests run the real Cucumber and Quint. Install them once:
+### Prerequisites
 
-```sh
-npm ci --prefix testdata/tools/cucumber
-npm ci --prefix testdata/tools/quint
+Some tests run the real Cucumber and Quint. These are needed; run the setup command once, in the module root, to install them:
+
+```
+Go 1.27.2
+Node.js with npm
+setup command:
+go run github.com/KogenAI/kogen-verification/cmd/setup-tools
 ```
 
-Then run:
+A test that needs Cucumber and cannot find it fails with that instruction. A module that consumes this one calls `prereq.Cucumber(t)` (package `github.com/KogenAI/kogen-verification/prereq`) to find Cucumber, and runs the same command in its own module root.
+
+Then run the checks:
 
 ```sh
 go build ./... && go vet ./... && go test -race -count=1 ./...

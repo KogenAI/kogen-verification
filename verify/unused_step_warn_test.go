@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-verification/prereq"
 )
 
 // K-UNUSEDSTEP-WARN in readiness: the Intent's own step files are loaded with the real Cucumber
@@ -27,20 +27,8 @@ const (
 // in what these tests establish, so it must not decide whether they run.
 func warnProject(t *testing.T) (*proj, Tools) {
 	t.Helper()
-	cucumber := os.Getenv("KOGEN_CUCUMBER")
-	if !isRegular(filepath.Join(cucumber, "@cucumber/cucumber/bin/cucumber.js")) {
-		// Relative to the package folder, which go test runs in (a module-relative caller path
-		// under -trimpath cannot locate the repository).
-		abs, err := filepath.Abs(filepath.Join("..", "testdata", "tools", "cucumber", "node_modules"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		cucumber = abs
-	}
+	cucumber := prereq.Cucumber(t)
 	tools := Tools{Node: findNode(t), Cucumber: cucumber}
-	if !isRegular(filepath.Join(tools.Cucumber, "@cucumber/cucumber/bin/cucumber.js")) {
-		t.Fatal("run npm ci in testdata/tools/cucumber for the real Cucumber, or set KOGEN_CUCUMBER")
-	}
 	p := newProj(t)
 	p.Env = append(p.Env, "CASE_TRACE="+p.trace("cases"))
 	p.write(warnStepFile, realSteps)
