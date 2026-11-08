@@ -46,25 +46,44 @@ type goRows struct {
 func parseGoRows(msg string) goRows {
 	g := goRows{runs: map[string]int{}, skips: map[string]int{}}
 	for _, line := range strings.Split(msg, "\n") {
-		line = strings.TrimSpace(line)
-		var row struct {
-			Action, Package, Test, Output string
-		}
-		if !strings.HasPrefix(line, "{") || json.Unmarshal([]byte(line), &row) != nil || row.Action == "" {
-			g.noTests = g.noTests || strings.Contains(line, "no tests to run")
-			continue
-		}
-		g.seen = true
-		if row.Package != "" && !slices.Contains(g.packages, row.Package) {
-			g.packages = append(g.packages, row.Package)
-		}
-		g.noTests = g.noTests || strings.Contains(row.Output, "no tests to run")
-		switch {
-		case row.Test == "":
-		case row.Action == "run":
-			g.runs[row.Test]++
-		case row.Action == "skip":
-			g.skips[row.Test]++
+		g.noTests = g.noTests || strings.Contains(line, "no tests to run")
+		// Helpers may print selected outcomes as a JSON array after a label,
+		// followed by a bounded excerpt of stdout. Read complete event objects
+		// there too; the excerpt may omit a completed test's run event.
+		for {
+			start := strings.IndexByte(line, '{')
+			if start < 0 {
+				break
+			}
+			line = line[start:]
+			var row struct {
+				Action, Package, Test, Output string
+			}
+			dec := json.NewDecoder(strings.NewReader(line))
+			if dec.Decode(&row) != nil {
+				line = line[1:]
+				continue
+			}
+			line = line[dec.InputOffset():]
+			if row.Action == "" || row.Package == "" {
+				continue
+			}
+			g.seen = true
+			if row.Package != "" && !slices.Contains(g.packages, row.Package) {
+				g.packages = append(g.packages, row.Package)
+			}
+			g.noTests = g.noTests || strings.Contains(row.Output, "no tests to run")
+			switch {
+			case row.Test == "":
+			case row.Action == "run":
+				g.runs[row.Test]++
+			case row.Action == "pass" || row.Action == "fail":
+				if g.runs[row.Test] == 0 {
+					g.runs[row.Test] = 1
+				}
+			case row.Action == "skip":
+				g.skips[row.Test]++
+			}
 		}
 	}
 	return g
