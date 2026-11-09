@@ -463,7 +463,11 @@ func (r *Readiness) checkClean(ctx context.Context, s *sys.Session, dir, slug st
 // definitions are warnings, never problems. Without Node and Cucumber, or when the script
 // cannot run, nothing is added: the acceptance run reports what it could not load.
 func (r *Readiness) stepAnalysis(ctx context.Context, s *sys.Session, dir string, intent *project.Intent, scenarios []project.Scenario) (problems []string, warnings []StepWarning, err error) {
-	own, files, texts := StepAnalysis(dir, intent, scenarios)
+	stepsDir := ""
+	if r.Config.Acceptance != nil {
+		stepsDir = r.Config.Acceptance.StepsDir
+	}
+	own, files, texts := StepAnalysisIn(dir, stepsDir, intent, scenarios)
 	node, cucumber := r.Tools.Node, r.Tools.Cucumber
 	if node == "" {
 		node = s.Getenv("KOGEN_NODE")

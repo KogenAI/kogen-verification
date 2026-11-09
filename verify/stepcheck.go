@@ -19,7 +19,7 @@ import (
 // and Cucumber the way the acceptance command loads them, so Shape's step self-check and
 // readiness agree on what is a defect and what is only a warning (K-UNUSEDSTEP-WARN).
 
-// StepsFolder is the folder of the project's step definitions.
+// StepsFolder is the default folder for project step definitions.
 const StepsFolder = "features/steps/"
 
 // StepItem is one thing the step analysis looked at. OK is false for a defect that refuses
@@ -182,14 +182,18 @@ func StepWarnings(items []StepItem) []StepWarning {
 	return out
 }
 
-// OwnStepFiles are the Intent's own step files: its Acceptance paths in the steps folder that
+// OwnStepFiles are the Intent's own step files in the default folder that
 // the acceptance command loads (JavaScript); other acceptance files there, such as Go drivers
 // mounted with go -overlay, are not step code. A step file reused from earlier work is as much
 // its own as a new one.
 func OwnStepFiles(intent *project.Intent) []string {
+	return ownStepFiles(intent, StepsFolder)
+}
+
+func ownStepFiles(intent *project.Intent, folder string) []string {
 	var own []string
 	for _, p := range intent.StepFiles() {
-		if strings.HasPrefix(p, StepsFolder) && filepath.Ext(p) == ".js" {
+		if strings.HasPrefix(p, folder) && filepath.Ext(p) == ".js" {
 			own = append(own, p)
 		}
 	}
@@ -199,7 +203,23 @@ func OwnStepFiles(intent *project.Intent) []string {
 // StepAnalysis is the load order and step texts of an Intent in root: the own files first,
 // then the other JavaScript files of the steps folder, and every distinct step text.
 func StepAnalysis(root string, intent *project.Intent, scenarios []project.Scenario) (own, files, texts []string) {
-	own = OwnStepFiles(intent)
+	return StepAnalysisIn(root, StepsFolder, intent, scenarios)
+}
+
+// StepAnalysisIn uses the configured repository-relative step directory.
+// An empty directory keeps the default used by StepAnalysis.
+func StepAnalysisIn(root, stepsDir string, intent *project.Intent, scenarios []project.Scenario) (own, files, texts []string) {
+	folder := StepsFolder
+	if stepsDir != "" {
+		if !filepath.IsLocal(stepsDir) {
+			return nil, nil, nil
+		}
+		folder = filepath.ToSlash(filepath.Clean(stepsDir)) + "/"
+		if folder == "./" {
+			folder = ""
+		}
+	}
+	own = ownStepFiles(intent, folder)
 	for _, sc := range scenarios {
 		for _, st := range sc.Steps {
 			if !slices.Contains(texts, st.Text) {
@@ -208,9 +228,9 @@ func StepAnalysis(root string, intent *project.Intent, scenarios []project.Scena
 		}
 	}
 	files = slices.Clone(own)
-	entries, _ := os.ReadDir(filepath.Join(root, StepsFolder))
+	entries, _ := os.ReadDir(filepath.Join(root, folder))
 	for _, e := range entries {
-		p := StepsFolder + e.Name()
+		p := folder + e.Name()
 		if !e.IsDir() && filepath.Ext(p) == ".js" && !slices.Contains(own, p) {
 			files = append(files, p)
 		}

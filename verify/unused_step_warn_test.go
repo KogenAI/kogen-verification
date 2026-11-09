@@ -143,6 +143,40 @@ func TestUnusedStepWarnReadiness(t *testing.T) {
 	})
 }
 
+func TestReadinessChecksConfiguredStepDirectory(t *testing.T) {
+	const stepsDir = "test/intents/steps"
+	const stepFile = stepsDir + "/fixture_steps.js"
+	for _, tc := range []struct {
+		name, steps string
+		bad         bool
+	}{
+		{"unused definition", realSteps + warnDeadStep, false},
+		{"exit wrapper", warnWrapperSteps, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateTmp(t)
+			p, tools := warnProject(t)
+			p.write(stepFile, tc.steps)
+			p.write(project.IntentMDPath(fixtureSlug), strings.Replace(intentMD("not applicable — nothing to model", ""), warnStepFile, stepFile, 1))
+			p.Config.Acceptance = &project.Acceptance{Run: cucumberRun(stepsDir), StepsDir: stepsDir}
+			p.commit("configured step directory")
+			ready, _, err := warnReadiness(t, p, tools)
+			if tc.bad {
+				e := failWith(t, err, "intent", "not_ready")
+				contains(t, "failure", strings.Join(e.Lines, "\n"), "exit_code "+stepFile)
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := StepWarning{Pattern: "never used {int}", File: stepFile, Detail: UnusedDefinition}
+			if len(ready.StepWarnings) != 1 || ready.StepWarnings[0] != want {
+				t.Fatalf("warnings %+v, want %+v", ready.StepWarnings, want)
+			}
+		})
+	}
+}
+
 const (
 	warnWrapperSteps = `const {Then} = require('@cucumber/cucumber');
 const fs = require('node:fs');
