@@ -24,6 +24,7 @@ var (
 	testIDRe      = regexp.MustCompile(`^(Test|Fuzz|Example)([^a-z]\w*)?$`)
 	packageArgRe  = regexp.MustCompile(`^(\.{1,2}(/\S*)?|[\w.-]+(/[\w.-]+)+)$`)
 	runSelectorRe = regexp.MustCompile(`-run[= ]\s*(?:'([^']*)'|"([^"]*)"|(\S+))`)
+	verboseRowRe  = regexp.MustCompile(`^\s*(?:=== (RUN)\s+|--- (SKIP|PASS|FAIL):\s+)(\S+)`)
 	goTestCommand = regexp.MustCompile(`go test\b[^;\n"]*`)
 	selectorPunct = strings.NewReplacer("^", "", "$", "", "(", "", ")", "")
 )
@@ -40,13 +41,25 @@ type goRows struct {
 	runs, skips map[string]int
 	packages    []string
 	noTests     bool
-	seen        bool // any `go test -json` row
+	seen        bool // any recognized Go test row
 }
 
 func parseGoRows(msg string) goRows {
 	g := goRows{runs: map[string]int{}, skips: map[string]int{}}
 	for _, line := range strings.Split(msg, "\n") {
 		g.noTests = g.noTests || strings.Contains(line, "no tests to run")
+		if m := verboseRowRe.FindStringSubmatch(line); m != nil {
+			id, _, _ := strings.Cut(m[3], "/")
+			g.seen = true
+			switch {
+			case m[1] == "RUN":
+				g.runs[id]++
+			case m[2] == "SKIP":
+				g.skips[id]++
+			case g.runs[id] == 0:
+				g.runs[id] = 1
+			}
+		}
 		// Helpers may print selected outcomes as a JSON array after a label,
 		// followed by a bounded excerpt of stdout. Read complete event objects
 		// there too; the excerpt may omit a completed test's run event.

@@ -226,3 +226,23 @@ func TestNamedFeedbackMissingTests(t *testing.T) {
 	}
 	eq(t, "feedback after a record round trip", back.Feedback(runner, "finish"), feedback)
 }
+
+func TestNamedFeedbackVerboseTranscripts(t *testing.T) {
+	for _, tc := range []struct {
+		name, output, block string
+		unwritten           []string
+	}{
+		{name: "selected test failed", output: "=== RUN   TestX\n--- FAIL: TestX (0.00s)"},
+		{name: "only another test ran", output: "=== RUN   TestY\n--- PASS: TestY (0.00s)",
+			block:     "\nrequired tests that did not run (from the step's arguments and the acceptance output):\n  TestX: did not run (no run of it in the go test output)\nacceptance ran them in: go test -v -run ^TestX$\nstep definition: not reported",
+			unwritten: []string{"TestX: did not run (no run of it in the go test output)"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := "go test -v -run ^TestX$\n" + tc.output
+			block, unwritten := missingNamedTests(nil, []stepResult{{result: jmap{"status": "FAILED", "message": msg}}}, nil)
+			if block != tc.block || !slices.Equal(unwritten, tc.unwritten) {
+				t.Errorf("got block %q, unwritten %q; want %q, %q", block, unwritten, tc.block, tc.unwritten)
+			}
+		})
+	}
+}
