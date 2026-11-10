@@ -356,6 +356,27 @@ func (p Pass) Summary() string {
 		what = "all checks passed"
 	case len(p.Failing) > 0:
 		what = strings.Join(p.Failing, ", ") + " failed"
+		if p.Acceptance != nil && len(p.Acceptance.Scenarios) > 0 {
+			for _, item := range p.Failing {
+				if item == "acceptance" {
+					var names []string
+					failed := 0
+					for _, scenario := range p.Acceptance.Scenarios {
+						if scenario.Status != "passed" {
+							failed++
+							if len(names) < 3 {
+								names = append(names, fmt.Sprintf("%s:%d", scenario.Name, scenario.Line))
+							}
+						}
+					}
+					if failed > 3 {
+						names = append(names, "...")
+					}
+					what += fmt.Sprintf(" (%d of %d scenarios: %s)", failed, len(p.Acceptance.Scenarios), strings.Join(names, ", "))
+					break
+				}
+			}
+		}
 	default:
 		what = "files changed while the checks ran: " + strings.Join(p.Moved, ", ")
 	}

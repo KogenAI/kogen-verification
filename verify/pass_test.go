@@ -394,3 +394,24 @@ func TestDependencyReorderedKeyIsWrittenOnlyWhenSet(t *testing.T) {
 		t.Fatalf("ordinary record: %s: %v", b, err)
 	}
 }
+
+func TestPassSummaryAcceptanceScenarios(t *testing.T) {
+	tests := []struct {
+		name string
+		pass Pass
+		want string
+	}{
+		{"two of seven", Pass{N: 6, Failing: []string{"acceptance"}, NotRun: []string{"model", "checks"}, Acceptance: &Acceptance{Scenarios: []ScenarioResult{
+			{Name: "Alpha", Line: 6, Status: "passed"}, {Name: "Beta", Line: 12, Status: "failed"}, {Name: "Gamma", Line: 18, Status: "passed"}, {Name: "Delta", Line: 24, Status: "skipped"}, {Name: "Epsilon", Line: 30, Status: "passed"}, {Name: "Zeta", Line: 36, Status: "passed"}, {Name: "Eta", Line: 42, Status: "passed"},
+		}}}, "kogen: pass 6: acceptance failed (2 of 7 scenarios: Beta:12, Delta:24); not run because an earlier item failed: model, checks"},
+		{"five failures", Pass{N: 1, Failing: []string{"acceptance"}, Acceptance: &Acceptance{Scenarios: []ScenarioResult{
+			{Name: "Zebra", Line: 3, Status: "failed"}, {Name: "Ant", Line: 7, Status: "failed"}, {Name: "Yak", Line: 11, Status: "failed"}, {Name: "Bee", Line: 15, Status: "failed"}, {Name: "Fox", Line: 19, Status: "failed"},
+		}}}, "kogen: pass 1: acceptance failed (5 of 5 scenarios: Zebra:3, Ant:7, Yak:11, ...)"},
+		{"not run", Pass{N: 2, Failing: []string{"compile"}, NotRun: []string{"acceptance", "model"}}, "kogen: pass 2: compile failed; not run because an earlier item failed: acceptance, model"},
+		{"empty results", Pass{N: 3, Failing: []string{"acceptance"}, Acceptance: &Acceptance{}}, "kogen: pass 3: acceptance failed"},
+		{"other sections", Pass{N: 4, Failing: []string{"lint", "acceptance"}, Acceptance: &Acceptance{Scenarios: []ScenarioResult{{Name: "A", Line: 9, Status: "failed"}}}, Speculative: []CommandResult{{Name: "test"}}, Cancelled: []CommandResult{{Name: "build"}}}, "kogen: pass 4: lint, acceptance failed (1 of 1 scenarios: A:9); Speculative results: test; Cancelled work: build"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) { eq(t, "summary", tt.pass.Summary(), tt.want) })
+	}
+}
