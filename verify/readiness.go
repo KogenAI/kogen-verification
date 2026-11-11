@@ -342,6 +342,9 @@ func (r *Readiness) Check(ctx context.Context, s *sys.Session, slug string) (rea
 	}); err != nil {
 		return nil, err
 	}
+	if err := SeedIgnored(r.Root, scratch); err != nil {
+		s.Progress("kogen: build outputs not reused: " + err.Error())
+	}
 	ready, err = r.checkClean(ctx, s, scratch, slug, in)
 	if err != nil {
 		return nil, err

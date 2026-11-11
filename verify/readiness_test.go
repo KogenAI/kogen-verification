@@ -553,8 +553,8 @@ func TestReadinessMutationsCannotCertifyTheChangedBaselineEvenOnRepeatedChecks(t
 	}
 }
 
-// ExUnit: refinement_test.exs, local ignored warmth stays available to probes but out of final proof.
-func TestLocallyIgnoredWarmthIsAvailableToProbesButOutOfFinalProof(t *testing.T) {
+// ExUnit: refinement_test.exs, local ignored warmth seeds probes and readiness but stays out of the candidate.
+func TestLocallyIgnoredWarmthIsAvailableToProbesAndReadinessButOutOfTheCandidate(t *testing.T) {
 	for _, mode := range []string{"info exclude", "local excludes file"} {
 		t.Run(mode, func(t *testing.T) {
 			isolateTmp(t)
@@ -573,7 +573,7 @@ func TestLocallyIgnoredWarmthIsAvailableToProbesButOutOfFinalProof(t *testing.T)
 				t.Fatal(err)
 			}
 			eq(t, "the probe sees the warm file", probe.Output, "workspace only\n")
-			p.Config.Acceptance.Run = "test ! -e local-cache/warm.txt && " + p.Config.Acceptance.Run
+			p.Config.Acceptance.Run = "test -e local-cache/warm.txt && " + p.Config.Acceptance.Run
 			r := p.readiness()
 			ready, err := r.Check(context.Background(), s, fixtureSlug)
 			if err != nil {

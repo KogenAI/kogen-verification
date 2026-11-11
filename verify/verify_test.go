@@ -440,7 +440,7 @@ func TestExcludedIntentFoldersAndWorkspaceArtifactsStayOutOfTheCandidate(t *test
 	p.write(".kogen/intents/other/intent.md", "# other\n")
 	p.write("build/undeclared.sh", "workspace only\n")
 	p.write("new.txt", "new candidate\n")
-	p.Config.Checks = []project.Check{{Name: "inputs", Run: `test ! -e .kogen/intents/other && test ! -e build/undeclared.sh && test -f new.txt && test "$(git status --porcelain)" = "" && git show HEAD:new.txt`}}
+	p.Config.Checks = []project.Check{{Name: "inputs", Run: `test ! -e .kogen/intents/other && test -f new.txt && test "$(git status --porcelain)" = "" && git show HEAD:new.txt`}}
 	s, _ := p.session()
 	in := p.input(1)
 	in.Excluded = []string{".kogen/intents/other"}
@@ -471,7 +471,7 @@ func TestDeclaredGitCommandsSeeTheExactCleanInputsInAPass(t *testing.T) {
 	}
 	p.write("build/undeclared.sh", "workspace only\n")
 	p.Config.Checks = []project.Check{
-		{Name: "show", Run: `git show HEAD:app.sh; git show HEAD:link; echo; git ls-files --error-unmatch new.txt; test -x app.sh; test -f build/tracked.txt; test ! -e build/undeclared.sh`},
+		{Name: "show", Run: `git show HEAD:app.sh; git show HEAD:link; echo; git ls-files --error-unmatch new.txt; test -x app.sh; test -f build/tracked.txt`},
 		{Name: "clean", Run: `test -z "$(git status --porcelain)"`},
 	}
 	s, _ := p.session()

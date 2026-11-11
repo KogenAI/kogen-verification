@@ -275,6 +275,9 @@ func verify(ctx context.Context, s *sys.Session, in Input, tr *passTrace) (Pass,
 		if err != nil {
 			return nil, false, tr.fail(causeTree, err)
 		}
+		if err := SeedIgnored(in.Root, scratch); err != nil {
+			s.Progress("kogen: build outputs not reused: " + err.Error())
+		}
 		if err := os.MkdirAll(filepath.Join(scratch, ".kogen/local"), 0o755); err != nil {
 			return nil, false, tr.fail(causeOther, err)
 		}
