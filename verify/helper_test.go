@@ -189,7 +189,10 @@ func lacks(t *testing.T, name, text, part string) {
 // leaves behind in it.
 func isolateTmp(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("TMPDIR", dir)
 	return dir
 }

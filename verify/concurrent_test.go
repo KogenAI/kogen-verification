@@ -220,7 +220,8 @@ func dependencyCohortPass(t *testing.T, deps map[string][]string) Pass {
 	p.Config.Checks = []project.Check{{Name: "build", Run: "go build ./..."}, {Name: "vet", Run: "go vet ./..."}}
 	in := p.input(1)
 	in.Dependencies = deps
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// The fake go polls with sleep, which can take far longer than 10ms on a loaded or slow host.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	pass, err := Verify(ctx, sys.NewWith(p.Env, p.Root), in)
 	if err != nil {

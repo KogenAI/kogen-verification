@@ -14,7 +14,11 @@ import (
 )
 
 func TestCommand(t *testing.T) {
-	dir := t.TempDir()
+	// The shell reports $PWD with symlinks resolved (/var is /private/var on macOS).
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := sys.NewWith([]string{"PATH=/bin:/usr/bin", "VALUE=base"}, dir)
 	if s.Getenv("VALUE") != "base" {
 		t.Fatal(s.Env)
