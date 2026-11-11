@@ -86,25 +86,19 @@ func TestBuildCompleteEvidence(t *testing.T) {
 
 func TestPassWireRecords(t *testing.T) {
 	for _, tc := range []struct{ model, wire string }{{"none", `"none"`}, {"not_run", `"not_run"`}, {"ok", `{"ok":[]}`}, {"failed", `{"failed":[]}`}} {
-		for _, legacy := range []bool{false, true} {
-			p := verify.Pass{N: 1, Clean: true, Tree: "tree", Model: verify.ModelResult{State: tc.model}, Legacy: legacy}
-			b, e := json.Marshal(p)
-			if e != nil {
-				t.Fatal(e)
-			}
-			extra := `,"setup":[],"not_run":[]`
-			if legacy {
-				extra = ""
-			}
-			want := `{"n":1,"clean":true,"green":false,"tree":"tree","acceptance":"not_run","model":` + tc.wire + `,"checks":[],"moved":[],"failing":[]` + extra + `}`
-			var got, expected any
-			if json.Unmarshal(b, &got) != nil || json.Unmarshal([]byte(want), &expected) != nil || !reflect.DeepEqual(got, expected) {
-				t.Fatalf("got %s want %s", b, want)
-			}
-			var q verify.Pass
-			if e = json.Unmarshal(b, &q); e != nil || q.Legacy != legacy || q.Model.State != tc.model {
-				t.Fatalf("%+v %v", q, e)
-			}
+		p := verify.Pass{N: 1, Clean: true, Tree: "tree", Model: verify.ModelResult{State: tc.model}}
+		b, e := json.Marshal(p)
+		if e != nil {
+			t.Fatal(e)
+		}
+		want := `{"n":1,"clean":true,"green":false,"tree":"tree","acceptance":"not_run","model":` + tc.wire + `,"checks":[],"moved":[],"failing":[],"setup":[],"not_run":[]}`
+		var got, expected any
+		if json.Unmarshal(b, &got) != nil || json.Unmarshal([]byte(want), &expected) != nil || !reflect.DeepEqual(got, expected) {
+			t.Fatalf("got %s want %s", b, want)
+		}
+		var q verify.Pass
+		if e = json.Unmarshal(b, &q); e != nil || q.Model.State != tc.model {
+			t.Fatalf("%+v %v", q, e)
 		}
 	}
 }

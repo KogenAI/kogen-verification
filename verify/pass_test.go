@@ -10,8 +10,8 @@ import (
 )
 
 // passGolden is testdata/golden/passes.json: recorded pass records with the feedback and the
-// completeness verdict the code gives them. Every `pass` record is input, including the legacy
-// records from before `setup` and `not_run` existed, as are the other fields of each case.
+// completeness verdict the code gives them. Every `pass` record is input, as are the other
+// fields of each case.
 // `go test -update` rewrites `feedback[].feedback` and `complete[].complete`; no other byte of
 // the file is rewritten.
 type passGolden struct {
@@ -108,16 +108,12 @@ func TestPassCompleteEqualsTheElixirVerdictOnEveryReference(t *testing.T) {
 			if got != c.Done {
 				t.Fatalf("Complete = %v, want %v", got, c.Done)
 			}
-			// A pass written by Kogen and read back keeps its verdict, except that a record
-			// from before `setup` and `not_run` existed stays what it was.
+			// A pass written by Kogen and read back keeps its verdict.
 			again, err := json.Marshal(p)
 			if err != nil {
 				t.Fatal(err)
 			}
 			q := readPass(t, again)
-			if p.Legacy {
-				return
-			}
 			if got := q.Complete(cfg, expected, model); got != c.Done {
 				t.Fatalf("Complete after a round trip = %v, want %v", got, c.Done)
 			}
@@ -256,13 +252,8 @@ func TestCompleteRequiresRequiredCleanEvidenceNotAStoredBoolean(t *testing.T) {
 	checks := func() []CommandResult {
 		return []CommandResult{{Name: "z-first", Command: "true"}, {Name: "a-last", Command: "true"}}
 	}
-	// An old clean record: no setup, no not_run.
-	old := Pass{Green: true, Clean: true, Legacy: true, Acceptance: acc(), Model: ModelNone, Checks: checks()}
-	if !old.Complete(cfg, expected, none) {
-		t.Fatal("old complete clean evidence stays reusable")
-	}
+	old := Pass{Green: true, Clean: true, Acceptance: acc(), Model: ModelNone, Checks: checks(), NotRun: []string{}, Setup: []CommandResult{{Name: "setup-1", Command: "true"}}}
 	current := old
-	current.Legacy, current.NotRun, current.Setup = false, []string{}, []CommandResult{{Name: "setup-1", Command: "true"}}
 	if !current.Complete(cfg, expected, none) {
 		t.Fatal("current complete evidence is reusable")
 	}
@@ -286,7 +277,7 @@ func TestCompleteRequiresRequiredCleanEvidenceNotAStoredBoolean(t *testing.T) {
 		"not run":           mut(func(p *Pass) { p.NotRun = []string{"a-last"} }),
 		"speculative":       mut(func(p *Pass) { p.Speculative = []CommandResult{{Name: "later"}} }),
 		"cancelled":         mut(func(p *Pass) { p.Cancelled = []CommandResult{{Name: "later", Status: -1}} }),
-		"empty setup":       mut(func(p *Pass) { p.Legacy, p.Setup = false, []CommandResult{} }),
+		"empty setup":       mut(func(p *Pass) { p.Setup = []CommandResult{} }),
 	} {
 		if p.Complete(cfg, expected, none) {
 			t.Errorf("%s: must be incomplete", name)
@@ -413,5 +404,18 @@ func TestPassSummaryAcceptanceScenarios(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { eq(t, "summary", tt.pass.Summary(), tt.want) })
+	}
+}
+
+func TestPassRecordWithoutCurrentEvidenceIsRefused(t *testing.T) {
+	for name, record := range map[string]string{
+		"no setup":   `{"n":1,"tree":"t","acceptance":"not_run","model":"none","checks":[],"moved":[],"failing":[],"not_run":[]}`,
+		"no not_run": `{"n":1,"tree":"t","acceptance":"not_run","model":"none","checks":[],"moved":[],"failing":[],"setup":[]}`,
+		"neither":    `{"n":1,"tree":"t","acceptance":"not_run","model":"none","checks":[],"moved":[],"failing":[]}`,
+	} {
+		var p Pass
+		if err := json.Unmarshal([]byte(record), &p); err == nil {
+			t.Errorf("%s: a record without current setup and not_run evidence must be refused", name)
+		}
 	}
 }

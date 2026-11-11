@@ -118,7 +118,7 @@ func modelOutcome(m *project.ModelSpec) string {
 }
 
 // Cached loads complete successful evidence for the current full baseline, HEAD and
-// candidate tree, or returns nil: anything missing, malformed, legacy, mismatching or stale
+// candidate tree, or returns nil: anything missing, malformed, mismatching or stale
 // is a normal miss.
 func (r *Readiness) Cached(s *sys.Session, slug string) *Ready {
 	in, err := r.inputs(s, slug)

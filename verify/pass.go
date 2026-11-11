@@ -88,10 +88,6 @@ type Pass struct {
 	Moved                    []string
 	Failing                  []string
 	SpecUpdate               *SpecUpdate
-
-	// Legacy marks a recorded pass from before `setup` and `not_run` existed: complete clean
-	// evidence of that kind stays reusable (VER-7).
-	Legacy bool
 }
 
 type passJSON struct {
@@ -104,7 +100,7 @@ type passJSON struct {
 	Clean                    bool                      `json:"clean"`
 	Green                    bool                      `json:"green"`
 	Tree                     string                    `json:"tree"`
-	Setup                    any                       `json:"setup,omitempty"` // absent in a legacy record
+	Setup                    any                       `json:"setup,omitempty"`
 	Acceptance               any                       `json:"acceptance"`
 	Model                    any                       `json:"model"`
 	MaintainedModels         []MaintainedModelResult   `json:"maintained_models,omitempty"`
@@ -112,7 +108,7 @@ type passJSON struct {
 	Checks                   []CommandResult           `json:"checks"`
 	Speculative              []CommandResult           `json:"speculative,omitempty"`
 	Cancelled                []CommandResult           `json:"cancelled,omitempty"`
-	NotRun                   any                       `json:"not_run,omitempty"` // absent in a legacy record
+	NotRun                   any                       `json:"not_run,omitempty"`
 	Moved                    []string                  `json:"moved"`
 	Failing                  []string                  `json:"failing"`
 	SpecUpdate               *SpecUpdate               `json:"spec_update,omitempty"`
@@ -143,9 +139,7 @@ func (p Pass) MarshalJSON() ([]byte, error) {
 		j.UncoveredAcceptance = &p.UncoveredAcceptance
 		j.UncoveredAcceptanceCount = p.UncoveredAcceptanceCount
 	}
-	if !p.Legacy {
-		j.Setup, j.NotRun = nonNil(p.Setup), nonNil(p.NotRun)
-	}
+	j.Setup, j.NotRun = nonNil(p.Setup), nonNil(p.NotRun)
 	if p.Acceptance == nil {
 		j.Acceptance = "not_run"
 	} else {
@@ -178,6 +172,11 @@ func (p *Pass) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &present); err != nil {
 		return err
 	}
+	for _, key := range []string{"setup", "not_run"} {
+		if _, ok := present[key]; !ok {
+			return fmt.Errorf("pass record lacks %q: reverify", key)
+		}
+	}
 	var j struct {
 		ExecutionOrder           []string                  `json:"execution_order"`
 		PulledForward            []string                  `json:"pulled_forward"`
@@ -207,9 +206,6 @@ func (p *Pass) UnmarshalJSON(data []byte) error {
 	*p = Pass{dependencyReordered: j.DependencyReordered, ExecutionOrder: j.ExecutionOrder, PulledForward: j.PulledForward, N: j.N, Clean: j.Clean, Green: j.Green, Tree: j.Tree, Setup: j.Setup, Checks: j.Checks,
 		Speculative: j.Speculative, Cancelled: j.Cancelled, NotRun: j.NotRun, Moved: j.Moved, Failing: j.Failing, MaintainedModels: j.MaintainedModels, MaintainedFeatures: j.MaintainedFeatures, SpecUpdate: j.SpecUpdate}
 	p.UncoveredAcceptance, p.UncoveredAcceptanceCount = j.UncoveredAcceptance, j.UncoveredAcceptanceCount
-	_, hasSetup := present["setup"]
-	_, hasNotRun := present["not_run"]
-	p.Legacy = !hasSetup && !hasNotRun
 	if len(j.Acceptance) > 0 && string(j.Acceptance) != `"not_run"` && string(j.Acceptance) != "null" {
 		var a Acceptance
 		if err := json.Unmarshal(j.Acceptance, &a); err != nil {
@@ -319,9 +315,6 @@ func (p Pass) Complete(cfg *project.Config, expected []project.Scenario, model *
 		if !found {
 			return false
 		}
-	}
-	if p.Legacy {
-		return true
 	}
 	if len(p.Setup) != len(cfg.Setup) {
 		return false

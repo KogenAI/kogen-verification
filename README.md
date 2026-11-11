@@ -45,7 +45,7 @@ go test ./... -update
 
 Use it after a deliberate change to a recorded output, or to settle a merge or cherry-pick conflict in a golden by regenerating it on the combined tree. Then run the full checks without the flag and review `git diff verify/testdata/golden`: it shows exactly the values that changed. A golden whose outputs already match is not touched.
 
-The flag rewrites only recorded outputs that differ, and only those values: every other byte of the file stays as recorded. It never rewrites recorded inputs or historical records (for example `record_text` in `readiness.json` and the legacy `pass` records in `passes.json`), and it must not be used to silence an unexplained failure. The flag exists only in the tests of package `verify`; no program has it.
+The flag rewrites only recorded outputs that differ, and only those values: every other byte of the file stays as recorded. It never rewrites recorded inputs or historical records (for example `record_text` in `readiness.json`), and it must not be used to silence an unexplained failure. The flag exists only in the tests of package `verify`; no program has it.
 
 ### Acceptance steps
 
