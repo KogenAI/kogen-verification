@@ -6,6 +6,7 @@ import (
 )
 
 func TestPrioritySchedule(t *testing.T) {
+	t.Parallel()
 	items := []item{{name: "setup-1", kind: "setup"}, {name: "setup-2", kind: "setup"}, {name: "acceptance", kind: "acceptance"}, {name: "model", kind: "model"}, {name: "A", kind: "check"}, {name: "B", kind: "check"}, {name: "C", kind: "check"}}
 	cases := []struct {
 		selected     []string
@@ -30,6 +31,7 @@ func TestPrioritySchedule(t *testing.T) {
 }
 
 func TestPulledForwardComparedWithDependencyOrder(t *testing.T) {
+	t.Parallel()
 	items := []item{{name: "A", kind: "check"}, {name: "B", kind: "check"}, {name: "C", kind: "check"}}
 	_, pulled := schedule(items, []string{"A"}, map[string][]string{"A": {"C"}})
 	if !reflect.DeepEqual(pulled, []string{"A"}) {
@@ -38,6 +40,7 @@ func TestPulledForwardComparedWithDependencyOrder(t *testing.T) {
 }
 
 func TestScheduleCycleAppendsLeftoversInInputOrder(t *testing.T) {
+	t.Parallel()
 	items := []item{{name: "acceptance", kind: "acceptance"}, {name: "A", kind: "check"}, {name: "B", kind: "check"}, {name: "C", kind: "check"}}
 	deps := map[string][]string{"A": {"B"}, "B": {"A"}}
 	for _, selected := range [][]string{nil, {"B"}} {

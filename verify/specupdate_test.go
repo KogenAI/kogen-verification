@@ -12,6 +12,7 @@ import (
 )
 
 func TestClassifySpecUpdate(t *testing.T) {
+	t.Parallel()
 	m := &MaintainedSpecs{Specs: []string{"spec/features/", "spec/model.qnt", "both"}, Implementation: []string{"src", "both", "spec/model.qnt"}}
 	u := classifySpecUpdate([]string{"src/b.go", "src/a.go", "spec/features/x.feature", "both/f", "docs/notes.md", "src/a_test.go.md", "spec/featuresx/y"}, m)
 	eq(t, "implementation count", u.ImplementationChangedCount, 3)
@@ -49,6 +50,7 @@ func TestClassifySpecUpdate(t *testing.T) {
 }
 
 func TestSpecUpdateNoticeLine(t *testing.T) {
+	t.Parallel()
 	u := SpecUpdate{ImplementationChangedCount: 1, ImplementationChanged: []string{"src/a.go"}, SpecsChanged: []string{}, SpecsUnchanged: []string{"spec/model.qnt", "spec/features/a.feature"}, SpecsNotUpdated: true}
 	want := "specs not updated: implementation files changed: 1 (src/a.go); maintained specifications unchanged: spec/model.qnt, spec/features/a.feature"
 	eq(t, "notice", u.Notice(), want)
@@ -68,6 +70,7 @@ func TestSpecUpdateNoticeLine(t *testing.T) {
 }
 
 func TestSpecUpdateInResultsAndFeedback(t *testing.T) {
+	t.Parallel()
 	flagged := &SpecUpdate{ImplementationChangedCount: 1, ImplementationChanged: []string{"src/a.go"}, SpecsChanged: []string{}, SpecsUnchanged: []string{"s.qnt"}, SpecsNotUpdated: true}
 	line := flagged.Notice()
 	base := Pass{N: 2, Model: ModelNone, Checks: []CommandResult{{Name: "lint", Command: "lint", Status: 1, Output: "bad\n"}}, Failing: []string{"lint"}, Moved: []string{"x"}, NotRun: []string{"later"}}
@@ -99,6 +102,7 @@ func TestSpecUpdateInResultsAndFeedback(t *testing.T) {
 }
 
 func TestSpecUpdateJSON(t *testing.T) {
+	t.Parallel()
 	p := Pass{Model: ModelNone}
 	data, err := json.Marshal(p)
 	if err != nil || strings.Contains(string(data), "spec_update") {
@@ -136,6 +140,7 @@ func specProj(t *testing.T) (*proj, *MaintainedSpecs) {
 }
 
 func TestVerifyMeasuresSpecUpdateAgainstStart(t *testing.T) {
+	t.Parallel()
 	p, specs := specProj(t)
 	p.write("src/a.go", "changed\n")
 	s, _ := p.session()
@@ -188,6 +193,7 @@ func TestVerifyMeasuresSpecUpdateAgainstStart(t *testing.T) {
 }
 
 func TestVerifyRefusesMissingDeclaredPathBeforeSetup(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		specs MaintainedSpecs
@@ -213,6 +219,7 @@ func TestVerifyRefusesMissingDeclaredPathBeforeSetup(t *testing.T) {
 }
 
 func TestVerifyNothingDeclaredKeepsRecordFeedbackAndResults(t *testing.T) {
+	t.Parallel()
 	p, _ := specProj(t)
 	p.write("src/a.go", "changed\n")
 	s, _ := p.session()

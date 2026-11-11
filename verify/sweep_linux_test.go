@@ -18,6 +18,7 @@ import (
 // new session) exited carries neither marker and has no marked parent; the run's subreaper
 // still stops it.
 func TestAcceptanceStopsMarkerlessSessionOrphan(t *testing.T) {
+	t.Parallel()
 	python := sweepPython(t)
 	root, slug := sweepRoot(t)
 	pidFile := filepath.Join(root, "pids")
@@ -38,6 +39,7 @@ open(sys.argv[1], "w").write("%d" % p.pid)
 }
 
 func TestAcceptanceReapedQuotesScript(t *testing.T) {
+	t.Parallel()
 	got := acceptanceReaped("echo 'x'")
 	if !strings.HasPrefix(got, "exec '") || !strings.HasSuffix(got, ` `+acceptanceReaperFlag+` 'echo '\''x'\'''`) {
 		t.Fatalf("acceptanceReaped = %q", got)
@@ -64,6 +66,7 @@ func runReaperHelper(t *testing.T, dir, script string) (string, int) {
 // A process-group member the helper adopted and that exits while the shell runs is reaped at
 // once, so a check that kills its group and polls kill -0 sees it gone.
 func TestAcceptanceReaperReapsAdoptedChildWhileShellRuns(t *testing.T) {
+	t.Parallel()
 	script := `( setsid /bin/sleep 300 </dev/null >/dev/null 2>&1 & echo $! > member )
 member=$(cat member)
 i=0
@@ -85,6 +88,7 @@ if kill -0 $member 2>/dev/null; then echo still present; else echo gone; fi
 
 // The helper returns the shell's status, not that of a child it reaped before the shell.
 func TestAcceptanceReaperReturnsShellStatus(t *testing.T) {
+	t.Parallel()
 	script := `( sh -c 'exit 9' & )
 sleep 0.3
 echo shell done

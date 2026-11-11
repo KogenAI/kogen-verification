@@ -51,6 +51,7 @@ func (p *proj) cases() int { return len(p.ran("cases")) }
 
 // ExUnit: fail_fast_verification_test.exs, real declared Cucumber fail-fast.
 func TestRealDeclaredCucumberFailFastKeepsFailedAndSkippedCasesRedWhileCompleteExitZeroIsGreen(t *testing.T) {
+	t.Parallel()
 	p, tools := realProject(t, "")
 	feature := project.FeaturePath(fixtureSlug)
 	expected := mustScenarios(t)
@@ -161,6 +162,7 @@ func TestRealCucumberAndQuintPassGreenThenModelRedStopsTheChecks(t *testing.T) {
 }
 
 func TestRealQuintTypecheckFailureIsNamedWithItsStatusAndOutput(t *testing.T) {
+	t.Parallel()
 	tools := realTools(t)
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "model.qnt"), []byte("module model {\n  val X = 1 + true\n}\n"), 0o644)
@@ -335,6 +337,7 @@ Then('the candidate succeeds', () => { throw new Error('not yet'); });`)
 
 // ExUnit: release_behavior_test.exs, both generated runners with paths that hold spaces.
 func TestRealBothGeneratedRunnersPreserveFeatureAndReportPathsWithSpaces(t *testing.T) {
+	t.Parallel()
 	tools := realTools(t)
 	p := newProjIn(t, "repo with space")
 	p.Env = append(p.Env, "CASE_TRACE="+p.trace("cases"))
@@ -407,6 +410,7 @@ Then('final {word}', function (value) {});
 }
 
 func TestRealQuintDiscoversRunWithInterveningComment(t *testing.T) {
+	t.Parallel()
 	tools := realTools(t)
 	dir := t.TempDir()
 	source := "module model {\n run /* comment */ BrokenTest = false\n}\n"

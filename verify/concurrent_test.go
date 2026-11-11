@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 )
 
 func TestIndependentGoCommands(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		command, flags string
 		want           bool
@@ -35,6 +38,7 @@ func TestIndependentGoCommands(t *testing.T) {
 }
 
 func TestSpeculativeRecordRoundTrip(t *testing.T) {
+	t.Parallel()
 	p := Pass{N: 1, Model: ModelNone, Speculative: []CommandResult{{Name: "vet", Command: "go vet ./...", Output: "completed\n"}}, Cancelled: []CommandResult{{Name: "later", Command: "go build ./...", Status: -1, Output: "partial\n"}}}
 	b, err := json.Marshal(p)
 	if err != nil {
@@ -104,6 +108,7 @@ func (l vetRecorded) Log(e map[string]any) {
 }
 
 func TestSuccessfulSpeculationRetained(t *testing.T) {
+	t.Parallel()
 	p := newProj(t)
 	aux := t.TempDir()
 	bin := filepath.Join(aux, "bin")
@@ -131,6 +136,7 @@ func TestSuccessfulSpeculationRetained(t *testing.T) {
 }
 
 func TestCohortCancellationAtLaunch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	parent := sys.NewWith(testEnv(), dir)
 	stop := make(chan struct{})
@@ -145,6 +151,7 @@ func TestCohortCancellationAtLaunch(t *testing.T) {
 }
 
 func TestCohortCallerInterruptJoins(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	parent := sys.NewWith(testEnv(), dir)
 	ready := filepath.Join(dir, "ready")
@@ -177,6 +184,7 @@ func TestCohortCallerInterruptJoins(t *testing.T) {
 }
 
 func TestCustomChecksAndOverridesKeepHandoffs(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"names", "override"} {
 		t.Run(mode, func(t *testing.T) {
 			p := newProj(t)
@@ -203,7 +211,7 @@ func TestCustomChecksAndOverridesKeepHandoffs(t *testing.T) {
 	}
 }
 
-func dependencyCohortPass(t *testing.T, deps map[string][]string) Pass {
+func dependencyCohortPass(t *testing.T, deps map[string][]string, polls int) Pass {
 	t.Helper()
 	p := newProj(t)
 	aux := t.TempDir()
@@ -212,7 +220,7 @@ func dependencyCohortPass(t *testing.T, deps map[string][]string) Pass {
 		t.Fatal(err)
 	}
 	vetStarted := shellQuote(filepath.Join(aux, "vet-started"))
-	script := "#!/bin/sh\nif test \"$1\" = vet; then touch " + vetStarted + "; exit 0; fi\ni=0; while ! test -f " + vetStarted + "; do i=$((i+1)); test $i -lt 200 || exit 90; sleep .01; done\nexit 0\n"
+	script := "#!/bin/sh\nif test \"$1\" = vet; then touch " + vetStarted + "; exit 0; fi\ni=0; while ! test -f " + vetStarted + "; do i=$((i+1)); test $i -lt " + strconv.Itoa(polls) + " || exit 90; sleep .01; done\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -231,16 +239,22 @@ func dependencyCohortPass(t *testing.T, deps map[string][]string) Pass {
 }
 
 func TestDependenciesJoiningNoChecksKeepCohortConcurrent(t *testing.T) {
+	t.Parallel()
 	for _, deps := range []map[string][]string{nil, {"vet": {"acceptance"}}, {"vet": {"unknown"}}} {
-		pass := dependencyCohortPass(t, deps)
-		if !pass.Green || len(pass.Checks) != 2 || len(pass.NotRun) != 0 || len(pass.Speculative) != 0 {
-			t.Fatalf("dependencies %v: %+v", deps, pass)
-		}
+		t.Run(fmt.Sprint(deps), func(t *testing.T) {
+			t.Parallel()
+			pass := dependencyCohortPass(t, deps, 200)
+			if !pass.Green || len(pass.Checks) != 2 || len(pass.NotRun) != 0 || len(pass.Speculative) != 0 {
+				t.Fatalf("dependencies %v: %+v", deps, pass)
+			}
+		})
 	}
 }
 
 func TestDependencyBetweenChecksKeepsThemSequential(t *testing.T) {
-	pass := dependencyCohortPass(t, map[string][]string{"vet": {"build"}})
+	t.Parallel()
+	// vet never starts while build runs, so build only needs a brief poll before giving up with 90.
+	pass := dependencyCohortPass(t, map[string][]string{"vet": {"build"}}, 3)
 	if pass.Green || len(pass.Checks) != 1 || pass.Checks[0].Name != "build" || pass.Checks[0].Status != 90 || !reflect.DeepEqual(pass.NotRun, []string{"vet"}) || len(pass.Speculative) != 0 {
 		t.Fatalf("pass: %+v", pass)
 	}

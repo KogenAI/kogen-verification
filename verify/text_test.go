@@ -37,6 +37,7 @@ type textGolden struct {
 }
 
 func TestBoundedTextsEqualTheElixirReference(t *testing.T) {
+	t.Parallel()
 	var g textGolden
 	readGolden(t, "text.json", &g)
 	if len(g.Cut) == 0 || len(g.Tail) == 0 || len(g.Cap) == 0 || len(g.Split) == 0 {
@@ -124,6 +125,7 @@ func TestBoundedTextsEqualTheElixirReference(t *testing.T) {
 }
 
 func TestCutKeepsHeadAndTailAtUTF8BoundariesAndNamesTheOmittedBytes(t *testing.T) {
+	t.Parallel()
 	for _, in := range []string{strings.Repeat("é", 20000), strings.Repeat("日", 9000), "a" + strings.Repeat("😀", 5000)} {
 		got := Cut(in)
 		if !utf8.ValidString(got) || len(got) > 16384 {

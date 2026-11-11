@@ -15,6 +15,7 @@ import (
 )
 
 func TestIdentityEnvironmentAndHash(t *testing.T) {
+	t.Parallel()
 	s := sys.NewWith([]string{"Z=old", "PATH=/bin", "Z=new", "KOGEN_STEP_RUN=random", "KOGEN_NODE=old", "SECRET=<value>"}, "")
 	env, _, _ := stableEnvironment(s, Tools{Node: "/node"})
 	if strings.Join(env.Names, ",") != "KOGEN_NODE,PATH,SECRET,Z" {
@@ -70,6 +71,7 @@ func TestIdentitySnapshotFilesAndProbes(t *testing.T) {
 
 // A slow but working tool (answering after the old fixed 1-second limit) is still reported ok.
 func TestIdentitySlowToolIsNotReportedMissing(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
 	if err := os.Mkdir(bin, 0700); err != nil {
@@ -86,6 +88,7 @@ func TestIdentitySlowToolIsNotReportedMissing(t *testing.T) {
 }
 
 func TestIdentityVerifyStage(t *testing.T) {
+	t.Parallel()
 	p := newProj(t)
 	s, _ := p.session()
 	in := p.input(1)
@@ -121,6 +124,7 @@ func TestIdentityVerifyStage(t *testing.T) {
 }
 
 func TestIdentityConcurrentCommands(t *testing.T) {
+	t.Parallel()
 	p := newProj(t)
 	bin := t.TempDir()
 	if err := os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\necho stub\n"), 0700); err != nil {
@@ -154,6 +158,7 @@ func TestIdentityConcurrentCommands(t *testing.T) {
 }
 
 func TestIdentityOutputAndEmptyEnvironment(t *testing.T) {
+	t.Parallel()
 	env, _, _ := stableEnvironment(sys.NewWith(nil, ""), Tools{})
 	if len(env.Names) != 0 || env.SHA256 != bytesHash([]byte("[]")) {
 		t.Fatal(env)
@@ -187,6 +192,7 @@ func identityToolPath(t *testing.T, tools any, name string) any {
 }
 
 func TestIdentityEmptyPathEntryIsRelativeAndStable(t *testing.T) {
+	t.Parallel()
 	p := newProj(t)
 	bin := t.TempDir()
 	for _, name := range []string{"sh", "grep", "cp", "git"} {
@@ -239,6 +245,7 @@ func TestIdentityEmptyPathEntryIsRelativeAndStable(t *testing.T) {
 }
 
 func TestIdentityRelativePathEntryRecordsPathUnderDir(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	outside := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "tools"), 0700); err != nil {

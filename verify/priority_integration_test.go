@@ -11,6 +11,7 @@ import (
 )
 
 func TestPriorityRunAndStage(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []bool{false, true} {
 		t.Run(map[bool]string{false: "run", true: "stage"}[stage], func(t *testing.T) {
 			p := newProj(t)
@@ -60,6 +61,7 @@ func TestPriorityRunAndStage(t *testing.T) {
 }
 
 func TestPriorityRedRecordsUnexecutedTail(t *testing.T) {
+	t.Parallel()
 	p := newProj(t)
 	p.Config.Checks = []project.Check{{Name: "A", Run: "true"}, {Name: "C", Run: "exit 1"}}
 	in := p.input(1)
@@ -89,6 +91,7 @@ func TestPriorityRedRecordsUnexecutedTail(t *testing.T) {
 }
 
 func TestDeclaredDependenciesWithoutPriorityComplete(t *testing.T) {
+	t.Parallel()
 	p := newProj(t)
 	p.Config.Checks = []project.Check{{Name: "A", Run: "true"}, {Name: "B", Run: "true"}}
 	in := p.input(1)

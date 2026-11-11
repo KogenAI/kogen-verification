@@ -23,6 +23,7 @@ func (l *slowProbeLog) Log(e map[string]any) {
 }
 
 func TestProbeSweepsEscapedChildAndPreservesAccounting(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "input"), []byte("before"), 0600); err != nil {
 		t.Fatal(err)
@@ -75,6 +76,7 @@ if os.fork()==0:
 }
 
 func TestProbeRefusalsDoNotLogSweep(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	log := &sweepLog{}
 	r, err := (Probe{Root: root, Command: "kill 1", Log: log}).Run(context.Background(), sessionFor(root))

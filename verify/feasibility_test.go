@@ -65,6 +65,7 @@ func evidenceIntent(acceptance, feasibility []string) *project.Intent {
 }
 
 func TestDeclarationsEqualTheElixirReadingOnEveryReference(t *testing.T) {
+	t.Parallel()
 	var g feasGolden
 	readGolden(t, "feasibility.json", &g)
 	if len(g.Declarations) < 40 {
@@ -121,6 +122,7 @@ func TestDeclarationsEqualTheElixirReadingOnEveryReference(t *testing.T) {
 }
 
 func TestValidEqualsTheElixirVerdictOnEveryReference(t *testing.T) {
+	t.Parallel()
 	var g feasGolden
 	readGolden(t, "feasibility.json", &g)
 	edits := goldenUpdates(t, "feasibility.json")
@@ -162,6 +164,7 @@ func TestValidEqualsTheElixirVerdictOnEveryReference(t *testing.T) {
 }
 
 func TestObservationsAndAcknowledgmentEqualTheElixirTexts(t *testing.T) {
+	t.Parallel()
 	var g feasGolden
 	readGolden(t, "feasibility.json", &g)
 	edits := goldenUpdates(t, "feasibility.json")
@@ -211,6 +214,7 @@ func evidenceLines(ds ...Declaration) []string {
 }
 
 func TestOrdinaryVersion3RecordsNeedNoFeasibilityProof(t *testing.T) {
+	t.Parallel()
 	in := evidenceIntent([]string{"observer.cjs"}, nil)
 	if !Valid("unused", in, nil) || !Valid("unused", in, []Obligation{}) || !Valid("unused", in, []any{}) {
 		t.Fatal("a record without declarations needs no proof")
@@ -218,6 +222,7 @@ func TestOrdinaryVersion3RecordsNeedNoFeasibilityProof(t *testing.T) {
 }
 
 func TestDeclarationsRequireUniqueIDsAndOrderedActualObserverControls(t *testing.T) {
+	t.Parallel()
 	d := capabilityDeclaration()
 	got, err := Declarations(evidenceIntent([]string{"observer.cjs"}, evidenceLines(d)))
 	if err != nil || len(got) != 1 || encode(got[0]) != encode(d) {
@@ -234,6 +239,7 @@ func TestDeclarationsRequireUniqueIDsAndOrderedActualObserverControls(t *testing
 }
 
 func TestRejectionEvidenceBindsCommandBytesAndCompleteActualOutcome(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "route.cjs"), []byte("original"), 0o644)
 	d := capabilityDeclaration()
@@ -268,6 +274,7 @@ func TestRejectionEvidenceBindsCommandBytesAndCompleteActualOutcome(t *testing.T
 // Ports test/kogen/feasibility_test.exs "observer polarity cannot be waived by matching
 // successful or rejected controls".
 func TestObserverPolarityCannotBeWaivedByMatchingSuccessfulOrRejectedControls(t *testing.T) {
+	t.Parallel()
 	declare := func(good, bad int) string {
 		b, _ := json.Marshal(map[string]any{
 			"id": "route", "kind": "observer", "inputs": []string{"route.cjs"}, "observers": []string{"observer.cjs"},

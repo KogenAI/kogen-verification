@@ -63,6 +63,7 @@ func stepMessages(waits []int, running bool) []string {
 }
 
 func TestReadStepTimes(t *testing.T) {
+	t.Parallel()
 	endedAt := time.Unix(110, 0).UTC().Format(time.RFC3339Nano)
 	t.Run("slowest first, labels, still running, cap of five", func(t *testing.T) {
 		lines := append(stepMessages([]int{3000, 0, 800, 200, 0, 60000}, true), `{"testStepSta`)
@@ -118,6 +119,7 @@ func TestReadStepTimes(t *testing.T) {
 }
 
 func TestApprovalAcceptanceTimeoutLines(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	s := sys.NewWith(os.Environ(), root)
 	report := filepath.Join(root, "report.ndjson")

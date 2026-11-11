@@ -13,6 +13,7 @@ import (
 )
 
 func TestAccountOnlyFinishedCompleteScenariosWithNoExtrasPass(t *testing.T) {
+	t.Parallel()
 	allStatuses := []string{"PASSED", "FAILED", "UNDEFINED", "PENDING", "SKIPPED", "AMBIGUOUS"}
 	dir := t.TempDir()
 	_, other := featureWithSteps(t, "extra", 1)
@@ -66,6 +67,7 @@ func TestAccountOnlyFinishedCompleteScenariosWithNoExtrasPass(t *testing.T) {
 }
 
 func TestAccountBindingProblemsSurviveFailedAssertionsUnlikeSkippedSteps(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, expected := featureWithSteps(t, "mixed", 2)
 	for _, status := range []string{"UNDEFINED", "AMBIGUOUS", "SKIPPED"} {
@@ -84,6 +86,7 @@ func TestAccountBindingProblemsSurviveFailedAssertionsUnlikeSkippedSteps(t *test
 }
 
 func TestAccountScenarioAbsentFromReportIsMissing(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, expected := featureWithSteps(t, "expected", 1)
 	report := writeReport(t, dir, "missing-scenario.ndjson", simpleMessages(testFeature, expected, reportOpts{notStarted: true}))
@@ -93,6 +96,7 @@ func TestAccountScenarioAbsentFromReportIsMissing(t *testing.T) {
 }
 
 func TestAccountSameScenarioKeyReportedTwiceIsDuplicate(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, expected := featureWithSteps(t, "duplicated", 1)
 	report := writeReport(t, dir, "duplicate.ndjson", simpleMessages(testFeature, expected, reportOpts{repeat: 2}))
@@ -102,6 +106,7 @@ func TestAccountSameScenarioKeyReportedTwiceIsDuplicate(t *testing.T) {
 }
 
 func TestAccountResultForUnexpectedFeatureRemainsAProblem(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, expected := featureWithSteps(t, "expected", 1)
 	_, other := featureWithSteps(t, "unexpected", 1)
@@ -113,6 +118,7 @@ func TestAccountResultForUnexpectedFeatureRemainsAProblem(t *testing.T) {
 }
 
 func TestAccountWillBeRetriedExcludesTheFailedAttemptWhenRetryPasses(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, expected := featureWithSteps(t, "retried", 2)
 	s := expected[0]
@@ -129,6 +135,7 @@ func TestAccountWillBeRetriedExcludesTheFailedAttemptWhenRetryPasses(t *testing.
 }
 
 func TestAccountTruncatedReportsAreInvalid(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, expected := featureWithSteps(t, "truncated", 2)
 	for name, opts := range map[string]reportOpts{
@@ -142,6 +149,7 @@ func TestAccountTruncatedReportsAreInvalid(t *testing.T) {
 }
 
 func TestAccountGarbageLineMakesTheReportInvalid(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, expected := featureWithSteps(t, "garbage", 1)
 	report := writeReport(t, dir, "garbage.ndjson", simpleMessages(testFeature, expected, reportOpts{}))
@@ -155,6 +163,7 @@ func TestAccountGarbageLineMakesTheReportInvalid(t *testing.T) {
 }
 
 func TestAccountMissingReportIsReportedOnceWithExitStatusAndOutput(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, expected := featureWithSteps(t, "missing report", 1)
 	got := account(dir, expected, filepath.Join(dir, "does-not-exist.ndjson"), 1, "Cucumber can only run on Node.js versions 22 || 24 || >=26\n")
@@ -163,6 +172,7 @@ func TestAccountMissingReportIsReportedOnceWithExitStatusAndOutput(t *testing.T)
 }
 
 func TestAccountNonzeroExitWithEveryScenarioPassedIsStillAProblem(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, expected := featureWithSteps(t, "passed", 1)
 	report := writeReport(t, dir, "passed.ndjson", simpleMessages(testFeature, expected, reportOpts{}))
@@ -173,6 +183,7 @@ func TestAccountNonzeroExitWithEveryScenarioPassedIsStillAProblem(t *testing.T) 
 }
 
 func TestAccountScenarioOutlineResultsUseEachExamplesRowLineAsTheKey(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	text := "Feature: Outline accounting\n  Scenario Outline: value <value>\n    Given the value is <value>\n    Then it is accepted\n  Examples:\n    | value |\n    | first |\n    | second |\n"
 	expected, err := project.ParseGherkin(text)
@@ -222,6 +233,7 @@ type goldenAccount struct {
 }
 
 func TestAccountEqualsTheElixirAccountingOnEveryReference(t *testing.T) {
+	t.Parallel()
 	var cases []goldenAccount
 	readGolden(t, "accounts.json", &cases)
 	if len(cases) < 50 {
@@ -266,6 +278,7 @@ func TestAccountEqualsTheElixirAccountingOnEveryReference(t *testing.T) {
 }
 
 func TestAccountRetainsOnlyActuallySkippedSteps(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, expected := featureWithSteps(t, "observed", 4)
 	for _, statusesList := range [][]string{{"FAILED", "SKIPPED", "PASSED", "SKIPPED"}, {"PASSED", "PASSED", "PASSED", "PASSED"}} {
@@ -291,6 +304,7 @@ func TestAccountRetainsOnlyActuallySkippedSteps(t *testing.T) {
 }
 
 func TestAccountRejectsBrokenAssertionChains(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, expected := featureWithSteps(t, "proof", 2)
 	for _, alteration := range []string{"complete", "omit-test", "omit-pickle", "omit-source", "duplicate-result", "wrong-source"} {
@@ -326,6 +340,7 @@ func TestAccountRejectsBrokenAssertionChains(t *testing.T) {
 }
 
 func TestAccountPhaseOfFailedScenarios(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, expected := featureWithSteps(t, "phased", 2)
 	missing := obj{"status": "FAILED", "message": "TypeError: product.prepare is not a function\n    at x", "exception": obj{"type": "TypeError", "message": "product.prepare is not a function\n    at x"}}

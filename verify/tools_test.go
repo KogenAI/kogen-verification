@@ -21,6 +21,7 @@ func configWith(commands ...string) *project.Config {
 
 // ExUnit: contract_regressions_test.exs, SHP-2 quoted executable paths.
 func TestQuotedExecutablePathsAndAssignmentValuesPassToolLookupWithoutExecution(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	tool := filepath.Join(root, "check tool")
 	os.WriteFile(tool, []byte("#!/bin/sh\nprintf executed > check-was-run\n"), 0o755)
@@ -45,6 +46,7 @@ func TestQuotedExecutablePathsAndAssignmentValuesPassToolLookupWithoutExecution(
 }
 
 func TestMissingProgramsAreNamedAsToolMissingWithExit3(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	s := sys.NewWith(testEnv(), root)
 	for _, tc := range []struct{ command, word string }{
@@ -70,6 +72,7 @@ func TestMissingProgramsAreNamedAsToolMissingWithExit3(t *testing.T) {
 }
 
 func TestToolLookupResolvesKogenNodeFromTheCallersEnvironment(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	cfg := configWith(`"$KOGEN_NODE" --version`)
 	s := sys.NewWith(append(testEnv(), "KOGEN_NODE=/bin/sh"), root)
@@ -87,6 +90,7 @@ func TestToolLookupResolvesKogenNodeFromTheCallersEnvironment(t *testing.T) {
 }
 
 func TestUnclosedQuoteInAConfiguredCommandIsAnInternalFailure(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	s := sys.NewWith(testEnv(), root)
 	err := RequireTools(s, Tools{}, root, configWith(`echo "unterminated`), true)
@@ -100,6 +104,7 @@ func TestUnclosedQuoteInAConfiguredCommandIsAnInternalFailure(t *testing.T) {
 }
 
 func TestRunnerCheckAcceptsARunnerThatExitsZeroAndWritesAReport(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	s := sys.NewWith(testEnv(), root)
 	var progress strings.Builder
@@ -118,6 +123,7 @@ func TestRunnerCheckAcceptsARunnerThatExitsZeroAndWritesAReport(t *testing.T) {
 }
 
 func TestRequireRunnerRefusesAnUnavailableRunner(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	s := sys.NewWith(testEnv(), root)
 	ok := &project.Config{Acceptance: &project.Acceptance{Run: `echo '{}' > "$KOGEN_ACCEPTANCE_REPORT"`}}
@@ -135,6 +141,7 @@ func TestRequireRunnerRefusesAnUnavailableRunner(t *testing.T) {
 }
 
 func TestToolsFromInstallResolveNodeAndTheBundledTools(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "node-path"), []byte("/opt/node/bin/node\n"), 0o644)
 	got := ToolsFromInstall(root)
@@ -151,6 +158,7 @@ func TestToolsFromInstallResolveNodeAndTheBundledTools(t *testing.T) {
 }
 
 func TestInstallToolFailuresAndPriority(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	np := filepath.Join(root, "node-path")
 	node := filepath.Join(root, "node")

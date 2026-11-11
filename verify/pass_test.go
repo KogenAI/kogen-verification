@@ -43,6 +43,7 @@ func readPass(t *testing.T, raw json.RawMessage) Pass {
 }
 
 func TestPassFeedbackEqualsTheElixirFeedback(t *testing.T) {
+	t.Parallel()
 	var g passGolden
 	readGolden(t, "passes.json", &g)
 	if len(g.Feedback) < 10 {
@@ -83,6 +84,7 @@ func TestPassFeedbackEqualsTheElixirFeedback(t *testing.T) {
 }
 
 func TestPassCompleteEqualsTheElixirVerdictOnEveryReference(t *testing.T) {
+	t.Parallel()
 	var g passGolden
 	readGolden(t, "passes.json", &g)
 	edits := goldenUpdates(t, "passes.json")
@@ -122,6 +124,7 @@ func TestPassCompleteEqualsTheElixirVerdictOnEveryReference(t *testing.T) {
 }
 
 func TestPassRecordHasExactlyTheFieldsKogenRecords(t *testing.T) {
+	t.Parallel()
 	p := Pass{N: 3, Clean: true, Tree: "abc", Model: ModelNone}
 	b, err := json.Marshal(p)
 	if err != nil {
@@ -168,6 +171,7 @@ func TestPassRecordHasExactlyTheFieldsKogenRecords(t *testing.T) {
 }
 
 func TestPassSummaryProgressLine(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		p    Pass
 		want string
@@ -185,6 +189,7 @@ func TestPassSummaryProgressLine(t *testing.T) {
 }
 
 func TestPassChecksLineAndResults(t *testing.T) {
+	t.Parallel()
 	acc := &Acceptance{Passed: 2, Scenarios: []ScenarioResult{{}, {}}}
 	p := Pass{Acceptance: acc, Model: ModelResult{State: "ok"}, Checks: []CommandResult{{Name: "lint"}, {Name: "test"}}}
 	eq(t, "checks line", p.ChecksLine(), "acceptance 2/2, model passed, lint passed, test passed")
@@ -195,6 +200,7 @@ func TestPassChecksLineAndResults(t *testing.T) {
 }
 
 func TestPassValidIsTheShapeAResumedRecordMustHave(t *testing.T) {
+	t.Parallel()
 	var g passGolden
 	readGolden(t, "passes.json", &g)
 	good := readPass(t, g.Complete[0].Pass)
@@ -221,6 +227,7 @@ func TestPassValidIsTheShapeAResumedRecordMustHave(t *testing.T) {
 }
 
 func TestPassRecordsThatCannotBeReadAreRejected(t *testing.T) {
+	t.Parallel()
 	var p Pass
 	for name, text := range map[string]string{
 		"not an object":      `[]`,
@@ -239,6 +246,7 @@ func TestPassRecordsThatCannotBeReadAreRejected(t *testing.T) {
 // ExUnit: run_test.exs, completeness of green evidence (the checkpoint-decoder half of that
 // test belongs to the build package).
 func TestCompleteRequiresRequiredCleanEvidenceNotAStoredBoolean(t *testing.T) {
+	t.Parallel()
 	expected, err := project.ParseGherkin("Feature: Example\n  Scenario: Complete\n    Given a gate\n")
 	if err != nil {
 		t.Fatal(err)
@@ -296,6 +304,7 @@ func TestCompleteRequiresRequiredCleanEvidenceNotAStoredBoolean(t *testing.T) {
 
 // ExUnit: run_test.exs, the run log cap.
 func TestCapPreservesUTF8AndFitsInAMebibyteIncludingItsMarker(t *testing.T) {
+	t.Parallel()
 	for _, size := range []int{1048575, 1048576} {
 		text := strings.Repeat("x", size)
 		eq(t, "short enough", Cap(text) == text, true)
@@ -340,6 +349,7 @@ func TestMaintainedFeatureRoundTrip(t *testing.T) {
 }
 
 func TestExecutionOrderNeverNullWhenEmitted(t *testing.T) {
+	t.Parallel()
 	b, err := json.Marshal(Pass{PulledForward: []string{}})
 	if err != nil {
 		t.Fatal(err)
@@ -368,6 +378,7 @@ func TestExecutionOrderNeverNullWhenEmitted(t *testing.T) {
 }
 
 func TestDependencyReorderedKeyIsWrittenOnlyWhenSet(t *testing.T) {
+	t.Parallel()
 	record := `{"dependency_reordered":true,"n":1,"clean":true,"green":true,"tree":"t","setup":[],"acceptance":"not_run","model":"none","checks":[],"not_run":[],"moved":[],"failing":[]}`
 	var p Pass
 	if err := json.Unmarshal([]byte(record), &p); err != nil {
@@ -387,6 +398,7 @@ func TestDependencyReorderedKeyIsWrittenOnlyWhenSet(t *testing.T) {
 }
 
 func TestPassSummaryAcceptanceScenarios(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		pass Pass
@@ -408,6 +420,7 @@ func TestPassSummaryAcceptanceScenarios(t *testing.T) {
 }
 
 func TestPassRecordWithoutCurrentEvidenceIsRefused(t *testing.T) {
+	t.Parallel()
 	for name, record := range map[string]string{
 		"no setup":   `{"n":1,"tree":"t","acceptance":"not_run","model":"none","checks":[],"moved":[],"failing":[],"not_run":[]}`,
 		"no not_run": `{"n":1,"tree":"t","acceptance":"not_run","model":"none","checks":[],"moved":[],"failing":[],"setup":[]}`,

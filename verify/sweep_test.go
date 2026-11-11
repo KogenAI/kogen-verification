@@ -17,6 +17,7 @@ import (
 )
 
 func TestAcceptanceTargets(t *testing.T) {
+	t.Parallel()
 	const me, self = 1000, 50
 	procs := []procEntry{
 		{pid: 1, ppid: 0, uid: 0},
@@ -99,6 +100,7 @@ func sweepPIDs(t *testing.T, file string, n int) []int {
 // A process that dropped the marker but whose parent still carries it when the command ends is
 // stopped with that parent.
 func TestAcceptanceStopsMarkerlessChildOfMarkedProcess(t *testing.T) {
+	t.Parallel()
 	python := sweepPython(t)
 	root, slug := sweepRoot(t)
 	pidFile := filepath.Join(root, "pids")
@@ -122,6 +124,7 @@ open(sys.argv[1], "w").write("%d %d" % (parent.pid, child))
 
 // A process carrying another run's value (an enclosing or concurrent run) is not touched.
 func TestAcceptanceLeavesOtherRunsProcessesAlone(t *testing.T) {
+	t.Parallel()
 	root, slug := sweepRoot(t)
 	other := exec.Command("sleep", "300")
 	other.Env = append(os.Environ(), acceptanceMarker+"=0123456789abcdef0123456789abcdef")
@@ -142,6 +145,7 @@ func TestAcceptanceLeavesOtherRunsProcessesAlone(t *testing.T) {
 
 // Every run gets its own value, replacing one inherited from the caller.
 func TestAcceptanceRunValueIsFreshPerRun(t *testing.T) {
+	t.Parallel()
 	root, slug := sweepRoot(t)
 	inherited := "inherited-by-an-enclosing-run"
 	s := sys.NewWith(append(os.Environ(), acceptanceMarker+"="+inherited), root)
@@ -188,6 +192,7 @@ open(sys.argv[1], "w").write(os.read(r, 32).decode())
 // A server that started a new session and was reparented when its launcher exited is stopped,
 // whether or not it kept its environment (an Apple platform binary hides it on macOS).
 func TestAcceptanceStopsDetachedServers(t *testing.T) {
+	t.Parallel()
 	python := sweepPython(t)
 	for _, envMode := range []string{"clear", "keep"} {
 		t.Run(envMode, func(t *testing.T) {
@@ -209,6 +214,7 @@ func TestAcceptanceStopsDetachedServers(t *testing.T) {
 
 // A process holding a descriptor on the marker file is selected; one holding another file is not.
 func TestProcHoldsFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	marker, other := filepath.Join(dir, "marker"), filepath.Join(dir, "other")
 	for _, f := range []string{marker, other} {
@@ -249,6 +255,7 @@ func TestProcHoldsFile(t *testing.T) {
 // A detached, environment-cleared process that Kogen itself starts while the run is running is
 // not the run's and survives.
 func TestAcceptanceLeavesDetachedProcessStartedDuringTheRun(t *testing.T) {
+	t.Parallel()
 	root, slug := sweepRoot(t)
 	s := sys.NewWith(os.Environ(), root)
 	var during *exec.Cmd
@@ -284,6 +291,7 @@ func (l *sweepLog) Log(event map[string]any) { l.events = append(l.events, event
 
 // The recorded and logged acceptance command is the configured one, not the text holding the marker.
 func TestAcceptanceRecordsTheConfiguredCommand(t *testing.T) {
+	t.Parallel()
 	root, slug := sweepRoot(t)
 	s := sys.NewWith(os.Environ(), root)
 	const command = "echo 'it''s'; exit 0"
@@ -308,6 +316,7 @@ func TestAcceptanceRecordsTheConfiguredCommand(t *testing.T) {
 
 // The marker file is a private empty file that exists only for the run.
 func TestAcceptanceMarkerFileExistsOnlyForTheRun(t *testing.T) {
+	t.Parallel()
 	python := sweepPython(t)
 	root, slug := sweepRoot(t)
 	out := filepath.Join(root, "marker")
@@ -349,6 +358,7 @@ func sweepDetachCommand(python, pidFile, envMode string) string {
 // A step without an Attempt (a builder pass) and one under an Attempt stop the server they leave
 // in a new session, whether or not it kept its environment, and log one step_sweep naming them.
 func TestStepStopsDetachedServers(t *testing.T) {
+	t.Parallel()
 	python := sweepPython(t)
 	for _, attempt := range []bool{false, true} {
 		for _, envMode := range []string{"clear", "keep"} {
@@ -385,6 +395,7 @@ func TestStepStopsDetachedServers(t *testing.T) {
 
 // A step that times out under an Attempt is swept too.
 func TestStepThatTimesOutIsSwept(t *testing.T) {
+	t.Parallel()
 	python := sweepPython(t)
 	root := t.TempDir()
 	pidFile := filepath.Join(root, "pids")
@@ -407,6 +418,7 @@ func TestStepThatTimesOutIsSwept(t *testing.T) {
 
 // A process carrying another step's value, and one started while the step runs, are not touched.
 func TestStepLeavesProcessesItDidNotStartAlone(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	other := exec.Command("sleep", "300")
 	other.Env = append(os.Environ(), stepMarker+"=0123456789abcdef0123456789abcdef")
@@ -446,6 +458,7 @@ func TestStepLeavesProcessesItDidNotStartAlone(t *testing.T) {
 // Every non-acceptance step gets a fresh KOGEN_STEP_RUN replacing an inherited one; the
 // acceptance step gets only KOGEN_ACCEPTANCE_RUN.
 func TestStepMarkerVariables(t *testing.T) {
+	t.Parallel()
 	root, slug := sweepRoot(t)
 	inherited := "inherited-by-an-enclosing-run"
 	s := sys.NewWith(append(os.Environ(), stepMarker+"="+inherited, acceptanceMarker+"="+inherited), root)
@@ -484,6 +497,7 @@ func TestStepMarkerVariables(t *testing.T) {
 // A step's recorded and logged command is the configured one, and its marker file exists only
 // for the step.
 func TestStepRecordsTheConfiguredCommandAndRemovesItsMarkerFile(t *testing.T) {
+	t.Parallel()
 	python := sweepPython(t)
 	root := t.TempDir()
 	out := filepath.Join(root, "marker")

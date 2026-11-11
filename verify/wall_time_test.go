@@ -28,6 +28,7 @@ func requireWall(t *testing.T, events []map[string]any, names ...string) {
 }
 
 func TestWallTimeStageAndMaintainedFeature(t *testing.T) {
+	t.Parallel()
 	p := newProj(t)
 	s, _ := p.session()
 	log := &memLog{}
@@ -147,6 +148,7 @@ func (l setupStartLog) Log(event map[string]any) {
 }
 
 func TestWallTimeDeadlineAndNeverStarted(t *testing.T) {
+	t.Parallel()
 	p := newProj(t)
 	p.Config.Setup = []string{"sleep 30", "echo never"}
 	s, _ := p.session()
@@ -187,6 +189,7 @@ func TestWallTimeDeadlineAndNeverStarted(t *testing.T) {
 }
 
 func TestWallTimeCancelledCohortBeforeStart(t *testing.T) {
+	t.Parallel()
 	p := newProj(t)
 	s := sys.NewWith(p.Env, p.Root)
 	log := &memLog{}

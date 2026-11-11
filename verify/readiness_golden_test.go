@@ -72,6 +72,7 @@ func goldenRepo(t *testing.T, name string) (root string, env []string) {
 }
 
 func TestReadinessRecordEqualsTheElixirRecordAndReadsBack(t *testing.T) {
+	t.Parallel()
 	var golden []readinessGolden
 	readGolden(t, "readiness.json", &golden)
 	if len(golden) != 2 {

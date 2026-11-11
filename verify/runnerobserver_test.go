@@ -3,6 +3,7 @@ package verify
 import "testing"
 
 func TestRunnerObserver(t *testing.T) {
+	t.Parallel()
 	const (
 		pass    = "1 runs, 7 assertions, 0 failures, 0 errors, 0 skips"
 		passTst = "1 tests, 7 assertions, 0 failures, 0 errors, 0 skips"

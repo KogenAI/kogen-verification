@@ -12,6 +12,7 @@ import (
 // itself, so the Build exits 130/143/129 rather than reporting an internal "context canceled"
 // (spec 04 "Ordinary implementation failures keep repairing until the caller stops it").
 func TestACommandAfterTheCallersInterruptReturnsTheInterrupt(t *testing.T) {
+	t.Parallel()
 	for _, signal := range []string{"SIGINT", "SIGTERM", "SIGHUP"} {
 		s := sys.NewWith([]string{"HOME=" + t.TempDir(), "PATH=" + os.Getenv("PATH")}, t.TempDir())
 		s.Interrupt(signal)

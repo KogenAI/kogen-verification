@@ -8,6 +8,7 @@ import (
 )
 
 func TestRedactorMasksKnownAndLabeledSecrets(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	creds := filepath.Join(home, ".kogen", "credentials")
 	if err := os.MkdirAll(creds, 0o700); err != nil {
@@ -39,6 +40,7 @@ func TestRedactorMasksKnownAndLabeledSecrets(t *testing.T) {
 }
 
 func TestRedactionPrecedesTheBounds(t *testing.T) {
+	t.Parallel()
 	r := NewRedactor([]string{"X_SECRET=SECRET-VALUE-0123456789"}, "")
 	// The secret begins 10 bytes before the 4096-byte head Cut keeps.
 	text := strings.Repeat("a", 4086) + "SECRET-VALUE-0123456789" + strings.Repeat("b", 30000)

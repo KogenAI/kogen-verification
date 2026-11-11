@@ -628,6 +628,7 @@ func TestReadinessBeforeRecordRunsAfterTheChecksAndCanStopTheRecord(t *testing.T
 }
 
 func TestCachedUnexercisedRequiresExactOrderedSourceSubset(t *testing.T) {
+	t.Parallel()
 	_, scenarios := featureWithSteps(t, "cache", 3)
 	steps := ScenarioRecord(scenarios[0]).Steps
 	for name, records := range map[string]any{
@@ -654,6 +655,7 @@ func TestCachedUnexercisedRequiresExactOrderedSourceSubset(t *testing.T) {
 }
 
 func TestObservationsKeepFirstFailureBeforeLongSkippedListings(t *testing.T) {
+	t.Parallel()
 	where := "a hook at features/steps/fixture_steps.js line 8"
 	detail := Cut(where + "\nhook-red: " + strings.Repeat("é", 11000))
 	skipped := []StepRecord{}
@@ -876,6 +878,7 @@ func TestShapeAcceptanceWithoutTimeoutRetainsNothing(t *testing.T) {
 }
 
 func TestDryRunProblemsNamesAcceptedFailuresOnlyWithASetupRefusal(t *testing.T) {
+	t.Parallel()
 	scenarios := []ScenarioResult{
 		{Name: "First", Line: 2, Status: "failed", Phase: "assertion"},
 		{Name: "Seeded", Line: 5, Status: "failed", Phase: "setup", SetupFailure: "acceptance.feature line 6: Given a seeded fixture\nboom"},
@@ -893,6 +896,7 @@ func TestDryRunProblemsNamesAcceptedFailuresOnlyWithASetupRefusal(t *testing.T) 
 }
 
 func TestReadinessInstallGateBeforeAcceptance(t *testing.T) {
+	t.Parallel()
 	p := newProj(t)
 	root := t.TempDir()
 	node := filepath.Join(root, "node")

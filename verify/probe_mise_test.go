@@ -10,6 +10,7 @@ import (
 )
 
 func TestProbeKeepsInstalledMiseData(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	home := filepath.Join(base, "home")
 	xdg := filepath.Join(base, "xdg")

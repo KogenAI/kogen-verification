@@ -200,6 +200,7 @@ func TestReadinessRunsDeclaredEvidenceAndRecordsItsProof(t *testing.T) {
 }
 
 func TestCopyTreeKeepsIgnoredFilesAndLeavesOutGitAndLocalState(t *testing.T) {
+	t.Parallel()
 	p := newProj(t)
 	p.write("build/out.txt", "ignored output")
 	p.write(".kogen/local/runs/x/log", "local")

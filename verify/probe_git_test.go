@@ -89,6 +89,7 @@ func snapshot(t *testing.T, root string) map[string]string {
 }
 
 func TestProbeCopyReadsSourceHistory(t *testing.T) {
+	t.Parallel()
 	root := gitProject(t)
 	first := gitIn(t, root, "rev-parse", "HEAD")
 	writeProjectFile(t, root, "src/main.txt", "Usage: main --verbose\n")
@@ -102,6 +103,7 @@ func TestProbeCopyReadsSourceHistory(t *testing.T) {
 }
 
 func TestProbeCopyIndexIsHeadAndWorkingTreeAsCopied(t *testing.T) {
+	t.Parallel()
 	root := gitProject(t)
 	writeProjectFile(t, root, "README.md", "changed\n")
 	writeProjectFile(t, root, "staged.txt", "staged\n")
@@ -114,6 +116,7 @@ func TestProbeCopyIndexIsHeadAndWorkingTreeAsCopied(t *testing.T) {
 }
 
 func TestProbeGitMetadataIsolation(t *testing.T) {
+	t.Parallel()
 	root := gitProject(t)
 	hook := filepath.Join(root, ".git", "hooks", "post-commit")
 	writeProjectFile(t, root, ".git/hooks/post-commit", "#!/bin/sh\ntouch \"$PWD/hook-marker\"\n")
@@ -167,6 +170,7 @@ func TestProbeGitMetadataIsolation(t *testing.T) {
 }
 
 func TestProbeCopyCarriesNoLocalConfig(t *testing.T) {
+	t.Parallel()
 	root := gitProject(t)
 	gitIn(t, root, "config", "user.name", "Source User")
 	gitIn(t, root, "config", "user.email", "source@example.invalid")
@@ -178,6 +182,7 @@ func TestProbeCopyCarriesNoLocalConfig(t *testing.T) {
 }
 
 func TestProbeCopyDetachedHead(t *testing.T) {
+	t.Parallel()
 	root := gitProject(t)
 	head := gitIn(t, root, "rev-parse", "HEAD")
 	gitIn(t, root, "checkout", "-q", "--detach")
@@ -188,6 +193,7 @@ func TestProbeCopyDetachedHead(t *testing.T) {
 }
 
 func TestProbeCopyLinkedWorktree(t *testing.T) {
+	t.Parallel()
 	main := gitProject(t)
 	root := filepath.Join(t.TempDir(), "linked")
 	gitIn(t, main, "worktree", "add", "-q", "-b", "feature", root)
@@ -208,6 +214,7 @@ func TestProbeCopyLinkedWorktree(t *testing.T) {
 }
 
 func TestProbeCopyShallowClone(t *testing.T) {
+	t.Parallel()
 	origin := gitProject(t)
 	writeProjectFile(t, origin, "src/main.txt", "Usage: main --verbose\n")
 	gitIn(t, origin, "commit", "-qam", "second")
@@ -220,6 +227,7 @@ func TestProbeCopyShallowClone(t *testing.T) {
 }
 
 func TestProbeCopySHA256(t *testing.T) {
+	t.Parallel()
 	root := gitProject(t, "--object-format=sha256")
 	head := gitIn(t, root, "rev-parse", "HEAD")
 	r := probeOf(t, root, "git rev-parse HEAD; git show HEAD:src/main.txt; git status --short; git rev-parse --show-object-format")
@@ -229,6 +237,7 @@ func TestProbeCopySHA256(t *testing.T) {
 }
 
 func TestProbeWithoutUsableSourceRepositoryHasNoGitMetadata(t *testing.T) {
+	t.Parallel()
 	noCommit := t.TempDir()
 	gitIn(t, noCommit, "init", "-q")
 	missing := gitProject(t)
@@ -250,6 +259,7 @@ func TestProbeWithoutUsableSourceRepositoryHasNoGitMetadata(t *testing.T) {
 }
 
 func TestProbeGitDiagnosticWithoutFinalNewline(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	r, err := RunProbe(context.Background(), sessionFor(root), root, "printf 'fatal: not a git repository'", nil)
 	if err != nil || r.Status != 0 || r.TimedOut || !strings.HasPrefix(r.Output, "fatal: not a git repository\nprobe copy has no git metadata:") {

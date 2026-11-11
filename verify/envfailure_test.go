@@ -3,6 +3,7 @@ package verify
 import "testing"
 
 func TestEnvFailure(t *testing.T) {
+	t.Parallel()
 	timedOut := "ok  \tkogen/verify\t1.204s\npanic: test timed out after 10m0s\n\trunning tests:\n\t\tTestSlow (10m0s)\n\nFAIL\tkogen/build\t600.214s\nFAIL\n"
 	for _, c := range []struct {
 		name   string

@@ -11,6 +11,7 @@ import (
 )
 
 func TestModelRequiresExecutedTestsAndAllowsNoTests(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// A successful runner with no test output cannot establish execution.
 	runner := filepath.Join(dir, "runner")
@@ -47,6 +48,7 @@ func TestModelRequiresExecutedTestsAndAllowsNoTests(t *testing.T) {
 }
 
 func TestModelInvariantDeclarations(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name       string
 		invariants []string

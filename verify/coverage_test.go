@@ -14,6 +14,7 @@ import (
 )
 
 func TestCoverageVerifyAndSerialization(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"partial", "strict", "silent", "all", "stopped", "none", "missing"} {
 		t.Run(mode, func(t *testing.T) {
 			p := newProj(t)
@@ -81,6 +82,7 @@ func TestCoverageVerifyAndSerialization(t *testing.T) {
 	}
 }
 func TestCoverageLineBoundaries(t *testing.T) {
+	t.Parallel()
 	for _, size := range []int{511, 512, 513} {
 		prefix := len("Acceptance coverage: 1 uncovered: ")
 		line := coverageLine([]string{strings.Repeat("a", size-prefix)})
@@ -97,6 +99,7 @@ func TestCoverageLineBoundaries(t *testing.T) {
 	}
 }
 func TestCoverageReportCompletedCases(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	report := filepath.Join(root, "report")
 	data := `{"gherkinDocument":{"uri":"document.feature"}}
@@ -116,6 +119,7 @@ func TestCoverageReportCompletedCases(t *testing.T) {
 }
 
 func TestVerifyAcceptanceAndMaintainedReports(t *testing.T) {
+	t.Parallel()
 	for _, maintained := range []bool{false, true} {
 		t.Run(fmt.Sprint(maintained), func(t *testing.T) {
 			p := newProj(t)

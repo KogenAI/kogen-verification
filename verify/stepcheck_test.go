@@ -8,6 +8,7 @@ import (
 )
 
 func TestExitWrapper(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ body, want string }{
 		{"spawnSync('sh',['-c','go run ./x']); assert.equal(r.status, 2)", "go run"},
 		{"sh('npm run t'); assert.equal(r.status, 2)", "npm run"},
@@ -25,6 +26,7 @@ func TestExitWrapper(t *testing.T) {
 }
 
 func TestStepItems(t *testing.T) {
+	t.Parallel()
 	const own = "features/steps/a_steps.js"
 	var raw StepRaw
 	err := json.Unmarshal([]byte(`{"loads":[{"file":"`+own+`","error":""}],

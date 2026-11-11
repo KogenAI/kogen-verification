@@ -7,6 +7,7 @@ import (
 )
 
 func TestFeedbackBudget(t *testing.T) {
+	t.Parallel()
 	for _, size := range []int{16383, 16384, 16385} {
 		text := strings.Repeat("x", size-3) + "é\n"
 		got := limitFeedback([]feedbackPart{{text, 1}})
@@ -37,6 +38,7 @@ func TestFeedbackBudget(t *testing.T) {
 }
 
 func TestFeedbackGroupsCommandsAndSections(t *testing.T) {
+	t.Parallel()
 	p := Pass{Model: ModelResult{State: "failed", Problems: []string{"bad", "bad", "different"}}, Checks: []CommandResult{{Name: "one", Status: 1, Output: "oops"}, {Name: "two", Status: 1, Output: "oops"}, {Name: "three", Status: 2, Output: "oops"}}}
 	got := p.Feedback("run", "")
 	for _, s := range []string{"model: failed", "2 scenarios", "2 checks: one, two", "check three", "different"} {
@@ -47,6 +49,7 @@ func TestFeedbackGroupsCommandsAndSections(t *testing.T) {
 }
 
 func TestFeedbackInvariantAndSpeculativeFailures(t *testing.T) {
+	t.Parallel()
 	p := Pass{Model: ModelResult{State: "failed", Problems: []string{"model.qnt: invariant first violated (seed 1)\nerror line 12", "model.qnt: invariant second violated (seed 1)\nerror line 25"}}, Speculative: []CommandResult{{Name: "a", Status: 1, Output: "a: error line 12"}, {Name: "b", Status: 1, Output: "b: error line 25"}, {Name: "ok", Output: "success"}, {Name: "ok2", Output: "success"}}}
 	got := p.Feedback("run", "")
 	for _, s := range []string{"2 scenarios: first, second", "2 checks: a, b", "ok (): status 0", "ok2 (): status 0"} {
@@ -60,6 +63,7 @@ func TestFeedbackInvariantAndSpeculativeFailures(t *testing.T) {
 }
 
 func TestFeedbackCountsBlankFailuresInOmittedTail(t *testing.T) {
+	t.Parallel()
 	lines := make([]string, 300)
 	for i := range lines {
 		lines[i] = fmt.Sprintf("row %03d ", i+1) + strings.Repeat("x", 92)
@@ -74,6 +78,7 @@ func TestFeedbackCountsBlankFailuresInOmittedTail(t *testing.T) {
 }
 
 func TestFeedbackStripsAdjacentNames(t *testing.T) {
+	t.Parallel()
 	d := func(s string) *string { return &s }
 	p := Pass{N: 1, Model: ModelResult{State: "ok"},
 		Acceptance: &Acceptance{Status: 1,

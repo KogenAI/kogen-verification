@@ -35,6 +35,7 @@ func TestHostLoadFormats(t *testing.T) {
 }
 
 func TestTimeoutLoadBoundaries(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		start, end *hostLoad
 		want       []string
@@ -53,6 +54,7 @@ func TestTimeoutLoadBoundaries(t *testing.T) {
 }
 
 func TestAttemptPassEvidencePrivate(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	a := NewAttempt(root, "demo", nil)
 	if err := a.Observe("snapshot", "git", func() error { return nil }); err != nil {

@@ -13,6 +13,7 @@ import (
 )
 
 func TestAttemptBoundsEachStepAndKeepsEvidence(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	s := sys.NewWith(os.Environ(), root)
 	a := NewAttempt(root, "demo", nil)
@@ -64,6 +65,7 @@ func TestAttemptBoundsEachStepAndKeepsEvidence(t *testing.T) {
 }
 
 func TestAttemptRefusalPassesInterruptsAndNonRefusalsThrough(t *testing.T) {
+	t.Parallel()
 	a := NewAttempt(t.TempDir(), "demo", nil)
 	for _, err := range []error{context.Canceled, &sys.Interrupted{Signal: "SIGINT"}, os.ErrNotExist} {
 		if got := a.Refuse(err); got != err {
@@ -78,6 +80,7 @@ func TestAttemptRefusalPassesInterruptsAndNonRefusalsThrough(t *testing.T) {
 }
 
 func TestAttemptUnknownTimeoutOutput(t *testing.T) {
+	t.Parallel()
 	for _, partial := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unavailable", true: "partial"}[partial], func(t *testing.T) {
 			root := t.TempDir()
