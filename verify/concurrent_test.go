@@ -110,7 +110,7 @@ func TestSuccessfulSpeculationRetained(t *testing.T) {
 	if err := os.Mkdir(bin, 0700); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\nif test \"$1\" = vet; then echo success; exit 0; fi\ni=0; while ! test -f " + shellQuote(filepath.Join(aux, "recorded")) + "; do i=$((i+1)); test $i -lt 200 || exit 90; sleep .01; done\necho failure; exit 17\n"
+	script := "#!/bin/sh\nif test \"$1\" = version; then echo go; exit 0; fi\nif test \"$1\" = vet; then echo success; exit 0; fi\ni=0; while ! test -f " + shellQuote(filepath.Join(aux, "recorded")) + "; do i=$((i+1)); test $i -lt 200 || exit 90; sleep .01; done\necho failure; exit 17\n"
 	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}

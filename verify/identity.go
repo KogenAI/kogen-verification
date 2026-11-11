@@ -135,6 +135,11 @@ func resolveIdentityTool(name, path, dir string) string {
 	}
 	return ""
 }
+
+// identityProbeTimeout bounds one tool's version probe. It is generous because a working tool
+// can take seconds to answer on a heavily loaded machine, and must not be reported as failed.
+var identityProbeTimeout = 30 * time.Second
+
 func probeIdentityTool(name, path, dir string, env []string) identityTool {
 	t := identityTool{Name: name, Status: "absent"}
 	resolved := resolveIdentityTool(name, path, dir)
@@ -155,7 +160,7 @@ func probeIdentityTool(name, path, dir string, env []string) identityTool {
 	if name == "erl" {
 		args = []string{"-noshell", "-eval", `io:format("~s~n", [erlang:system_info(otp_release)]), halt().`}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), identityProbeTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, resolved, args...)
 	cmd.Dir = dir

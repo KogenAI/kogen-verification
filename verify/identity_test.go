@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-loop/sys"
@@ -42,7 +43,7 @@ func TestIdentitySnapshotFilesAndProbes(t *testing.T) {
 	if err := os.Mkdir(bin, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for name, script := range map[string]string{"node": "printf '\\nfirst\\nsecond\\n'", "npm": "exit 1", "ruby": "sleep 5"} {
+	for name, script := range map[string]string{"node": "printf '\\nfirst\\nsecond\\n'", "npm": "exit 1", "ruby": "sleep 600"} {
 		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+script+"\n"), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -56,12 +57,31 @@ func TestIdentitySnapshotFilesAndProbes(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "nested", "go.sum"), []byte("ignored"), 0600)
 	// sleep must resolve under the isolated PATH.
 	os.Symlink("/bin/sleep", filepath.Join(bin, "sleep"))
+	defer func(d time.Duration) { identityProbeTimeout = d }(identityProbeTimeout)
+	identityProbeTimeout = 3 * time.Second
 	id := snapshotIdentity(sys.NewWith([]string{"PATH=" + bin}, dir), Tools{}, "tree", dir)
 	if len(id.Lockfiles) != 1 || id.Lockfiles[0] != (identityLock{"go.mod", bytesHash([]byte("test"))}) {
 		t.Fatal(id.Lockfiles)
 	}
 	if id.Tools[0].Status != "absent" || id.Tools[1].Status != "ok" || *id.Tools[1].Version != "first" || id.Tools[2].Status != "error" || id.Tools[3].Status != "timed_out" {
 		t.Fatal(id.Tools)
+	}
+}
+
+// A slow but working tool (answering after the old fixed 1-second limit) is still reported ok.
+func TestIdentitySlowToolIsNotReportedMissing(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "node"), []byte("#!/bin/sh\nsleep 1.5\necho v1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	os.Symlink("/bin/sleep", filepath.Join(bin, "sleep"))
+	got := probeIdentityTool("node", bin, dir, []string{"PATH=" + bin})
+	if got.Status != "ok" || got.Version == nil || *got.Version != "v1" {
+		t.Fatalf("slow tool probe = %+v, want ok with version v1", got)
 	}
 }
 
