@@ -3,7 +3,9 @@ package verify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -130,5 +132,34 @@ func TestAttemptUnknownTimeoutOutput(t *testing.T) {
 				t.Fatal("output not capped or redacted")
 			}
 		})
+	}
+}
+
+type failingCloseFile struct{ f *os.File }
+
+func (c failingCloseFile) Write(b []byte) (int, error) { return c.f.Write(b) }
+func (c failingCloseFile) Close() error {
+	_ = c.f.Close()
+	return errors.New("close failed")
+}
+
+func TestWriteRecordFileRemovesFilesOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "attempt.json")
+	err := writeRecordFile(path, []byte("{}\n"), func(name string) (recordFile, error) {
+		f, err := createRecordFile(name)
+		return failingCloseFile{f.(*os.File)}, err
+	})
+	if err == nil || !strings.Contains(err.Error(), "close failed") {
+		t.Fatalf("err = %v, want the close failure", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("files left after a failed close: %v", entries)
+	}
+	if err := writeRecordFile(path, []byte("{}\n"), createRecordFile); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 || entries[0].Name() != "attempt.json" {
+		t.Fatalf("entries after success: %v", entries)
 	}
 }

@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation rewrites retain in the large verify/attempt.go and adds a test seam; the Build writes it."}

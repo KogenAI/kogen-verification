@@ -431,12 +431,23 @@ func (a *Attempt) retain(refusal *sys.Error, steps []*AttemptStep, notRun []stri
 			return "", err
 		}
 	}
+	// Only the folders this call creates are removed again when retaining fails.
+	var created []string
+	fail := func(err error) (string, error) {
+		for i := len(created) - 1; i >= 0; i-- {
+			_ = os.RemoveAll(created[i])
+		}
+		return "", err
+	}
 	for _, dir := range []string{attemptsDir(a.root), filepath.Join(attemptsDir(a.root), id)} {
-		if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
-			return "", err
+		err := os.Mkdir(dir, 0o700)
+		if err == nil {
+			created = append(created, dir)
+		} else if !errors.Is(err, fs.ErrExist) {
+			return fail(err)
 		}
 		if err := os.Chmod(dir, 0o700); err != nil {
-			return "", err
+			return fail(err)
 		}
 	}
 	rec := attemptRecord{
@@ -461,18 +472,44 @@ func (a *Attempt) retain(refusal *sys.Error, steps []*AttemptStep, notRun []stri
 		return "", err
 	}
 	path := filepath.Join(attemptsDir(a.root), id, "attempt.json")
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return "", err
+	if err := writeRecordFile(path, append(b, '\n'), createRecordFile); err != nil {
+		return fail(err)
 	}
-	_, werr := f.Write(append(b, '\n'))
+	return path, nil
+}
+
+// recordFile is the file a record is written to.
+type recordFile interface {
+	Write([]byte) (int, error)
+	Close() error
+}
+
+func createRecordFile(name string) (recordFile, error) {
+	return os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+}
+
+// writeRecordFile writes data to a temporary name beside path and renames it to path only after a
+// successful write and close. On any failure neither the temporary file nor path remains.
+func writeRecordFile(path string, data []byte, create func(string) (recordFile, error)) (err error) {
+	tmp := path + ".tmp"
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmp)
+			_ = os.Remove(path)
+		}
+	}()
+	f, err := create(tmp)
+	if err != nil {
+		return err
+	}
+	_, werr := f.Write(data)
 	if cerr := f.Close(); werr == nil {
 		werr = cerr
 	}
 	if werr != nil {
-		return "", werr
+		return werr
 	}
-	return path, nil
+	return os.Rename(tmp, path)
 }
 
 func timeoutLoad(st *AttemptStep) string {
