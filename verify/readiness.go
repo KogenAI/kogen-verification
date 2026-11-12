@@ -45,6 +45,9 @@ type Readiness struct {
 	Attempt *Attempt
 	// BoundShapeAcceptance applies the approval acceptance command limit to Shape.
 	BoundShapeAcceptance bool
+	// Cache, when set, keeps the ignored build outputs of each readiness scratch tree for later
+	// fresh copies of the same Intent, lockfiles and toolchain in the run (see BuildCache).
+	Cache *BuildCache
 }
 
 func (r *Readiness) repo(s *sys.Session) *git.Repo {
@@ -345,6 +348,8 @@ func (r *Readiness) Check(ctx context.Context, s *sys.Session, slug string) (rea
 	if err := SeedIgnored(r.Root, scratch); err != nil {
 		s.Progress("kogen: build outputs not reused: " + err.Error())
 	}
+	key := r.SeedBuild(s, scratch, slug, mat.Paths)
+	defer r.KeepBuild(key, scratch) // runs before the scratch tree is removed
 	ready, err = r.checkClean(ctx, s, scratch, slug, in)
 	if err != nil {
 		return nil, err

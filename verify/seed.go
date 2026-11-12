@@ -15,27 +15,46 @@ import (
 // copy-on-write where the file system allows. Tracked content wins: a path already present in
 // dst is never replaced. .git and .kogen, which Kogen itself writes, are never copied.
 func SeedIgnored(src, dst string) error {
-	cmd := exec.Command("git", "-C", src, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	rels, err := ignoredPaths(src)
 	if err != nil {
-		return fmt.Errorf("listing ignored paths of %s: %v: %s", src, err, strings.TrimSpace(stderr.String()))
-	}
-	flags := []string{"-a", "--reflink=auto"}
-	if runtime.GOOS == "darwin" {
-		flags = []string{"-cRp"}
+		return err
 	}
 	roots := []string{filepath.Clean(src)}
 	if r, err := filepath.EvalSymlinks(src); err == nil && r != roots[0] {
 		roots = append(roots, r)
 	}
-	var seeded []string
+	return seedPaths(src, dst, rels, roots)
+}
+
+// ignoredPaths lists the git-ignored paths of the tree dir, as relative paths without .git and .kogen.
+func ignoredPaths(dir string) ([]string, error) {
+	cmd := exec.Command("git", "-C", dir, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("listing ignored paths of %s: %v: %s", dir, err, strings.TrimSpace(stderr.String()))
+	}
+	var rels []string
 	for _, rel := range strings.Split(string(out), "\x00") {
 		rel = strings.TrimSuffix(rel, "/")
 		if rel == "" || rel == ".git" || rel == ".kogen" || strings.HasPrefix(rel, ".git/") || strings.HasPrefix(rel, ".kogen/") {
 			continue
 		}
+		rels = append(rels, rel)
+	}
+	return rels, nil
+}
+
+// seedPaths copies the relative paths rels of src into dst, skipping those dst already has;
+// absolute links under them that lead into one of roots are repointed into dst.
+func seedPaths(src, dst string, rels, roots []string) error {
+	flags := []string{"-a", "--reflink=auto"}
+	if runtime.GOOS == "darwin" {
+		flags = []string{"-cRp"}
+	}
+	var seeded []string
+	for _, rel := range rels {
 		to := filepath.Join(dst, rel)
 		if _, err := os.Lstat(to); err == nil {
 			continue
