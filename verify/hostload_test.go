@@ -87,3 +87,12 @@ func TestAttemptPassEvidencePrivate(t *testing.T) {
 		}
 	}
 }
+
+func TestHostLoadShortLinuxLineRefused(t *testing.T) {
+	t.Parallel()
+	for _, text := range []string{"", "1", "1 2"} {
+		if got := parseHostLoad("linux", text); got != nil {
+			t.Errorf("%q: got %v want nil", text, got)
+		}
+	}
+}

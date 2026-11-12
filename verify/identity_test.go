@@ -273,3 +273,15 @@ func TestIdentityRelativePathEntryRecordsPathUnderDir(t *testing.T) {
 		t.Fatal(git)
 	}
 }
+
+func TestIdentityVersionLineCapBoundary(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "node"), []byte("#!/bin/sh\nprintf '"+strings.Repeat("y", 513)+"\\n'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	tool := probeIdentityTool("node", dir, dir, []string{"PATH=" + dir})
+	if tool.Version == nil || *tool.Version != strings.Repeat("y", 512) {
+		t.Fatal(tool)
+	}
+}
