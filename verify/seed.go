@@ -26,6 +26,10 @@ func SeedIgnored(src, dst string) error {
 	if runtime.GOOS == "darwin" {
 		flags = []string{"-cRp"}
 	}
+	roots := []string{filepath.Clean(src)}
+	if r, err := filepath.EvalSymlinks(src); err == nil && r != roots[0] {
+		roots = append(roots, r)
+	}
 	var seeded []string
 	for _, rel := range strings.Split(string(out), "\x00") {
 		rel = strings.TrimSuffix(rel, "/")
@@ -51,9 +55,36 @@ func SeedIgnored(src, dst string) error {
 				return fmt.Errorf("seeding %s: %s%s", rel, b, b2)
 			}
 		}
+		if err := retargetLinks(to, roots, dst); err != nil {
+			return err
+		}
 		seeded = append(seeded, rel)
 	}
 	return excludeSeeded(dst, seeded)
+}
+
+// retargetLinks repoints absolute symlinks under the copied path that lead into the source
+// checkout at the same path in dst, so writes through them cannot reach the checkout. Relative
+// links keep resolving within the copied layout.
+func retargetLinks(path string, roots []string, dst string) error {
+	return filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.Type()&os.ModeSymlink == 0 {
+			return nil
+		}
+		target, err := os.Readlink(p)
+		if err != nil || !filepath.IsAbs(target) {
+			return nil
+		}
+		for _, root := range roots {
+			if rel, err := filepath.Rel(root, target); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+				if err := os.Remove(p); err != nil {
+					return err
+				}
+				return os.Symlink(filepath.Join(dst, rel), p)
+			}
+		}
+		return nil
+	})
 }
 
 // excludeSeeded keeps the seeded paths ignored in a scratch repository, which does not share the
