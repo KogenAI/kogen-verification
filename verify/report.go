@@ -668,12 +668,25 @@ func stepDetail(tc, pickle jmap, stepID string, result any, lines map[string]ast
 	} else if m := get(result, "exception", "message"); truthy(m) {
 		msg = str(m)
 	}
-	msgLines := strings.Split(msg, "\n")
-	msg = strings.Join(msgLines[:min(20, len(msgLines))], "\n")
-	if len(msgLines) > 20 {
-		msg += fmt.Sprintf("\n[... %d lines omitted ...]", len(msgLines)-20)
-	}
+	msg = MessageExcerpt(msg)
 	return Cut(trimTrailing(where + "\n" + msg))
+}
+
+// maxMessageLines bounds a failed step's message: whole up to this many lines, else the first
+// line and the last lines, with the cut marked. A failing assertion and its file:line come at
+// the end of a test failure, so the tail matters more than the middle.
+const maxMessageLines = 200
+
+// MessageExcerpt keeps the first line and the tail of a long message, never more than
+// maxMessageLines lines plus the marker.
+func MessageExcerpt(msg string) string {
+	lines := strings.Split(msg, "\n")
+	if len(lines) <= maxMessageLines {
+		return msg
+	}
+	keep := maxMessageLines - 2
+	out := []string{lines[0], fmt.Sprintf("[... %d lines omitted ...]", len(lines)-1-keep)}
+	return strings.Join(append(out, lines[len(lines)-keep:]...), "\n")
 }
 
 func str0(v any) string {
