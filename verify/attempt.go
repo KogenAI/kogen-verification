@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -359,6 +361,9 @@ func (a *Attempt) Refuse(err error) error {
 		lines = append(lines, "Evidence not retained: "+werr.Error())
 	} else {
 		lines = append(lines, "Evidence: "+path)
+		if note := a.pruneAttempts(); note != "" {
+			lines = append(lines, a.Redact(note))
+		}
 	}
 	refusal.Lines = lines
 	return refusal
@@ -389,7 +394,11 @@ func (a *Attempt) refuseShapeTimeout(timeout *stepTimeout, limit time.Duration) 
 	if werr != nil {
 		refusal.Lines = append(lines, a.Redact("Evidence not retained: "+werr.Error()))
 	} else {
-		refusal.Lines = append(lines, a.Redact("Evidence: "+path))
+		lines = append(lines, a.Redact("Evidence: "+path))
+		if note := a.pruneAttempts(); note != "" {
+			lines = append(lines, a.Redact(note))
+		}
+		refusal.Lines = lines
 	}
 	return refusal
 }
@@ -526,5 +535,83 @@ func (a *Attempt) retainPass() {
 	a.mu.Lock()
 	steps := append([]*AttemptStep(nil), a.steps...)
 	a.mu.Unlock()
-	_, _ = a.retain(nil, steps, nil, "", false, nil)
+	if _, err := a.retain(nil, steps, nil, "", false, nil); err == nil {
+		// A passed attempt has no lines to carry a removal note.
+		_ = a.pruneAttempts()
+	}
+}
+
+// keptAttempts is the number of newest attempt folders that retaining evidence keeps.
+const keptAttempts = 20
+
+type prunable struct {
+	name, startedAt string
+	passed          bool
+}
+
+// pruneAttempts keeps only the newest keptAttempts attempt folders under the attempts area, after
+// a new record was written. Only direct child folders holding an attempt.json are candidates. They
+// are ordered by the record's started_at, then folder name. Passed attempts are removed first,
+// oldest first, then refused ones, oldest first, never the newest refusal. The first failed removal
+// ends the pruning without removing any other folder; it is returned as the one note line that
+// the refusal carries, or "" when nothing failed.
+func (a *Attempt) pruneAttempts() string {
+	dir := attemptsDir(a.root)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var all []prunable
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name(), "attempt.json"))
+		if err != nil {
+			continue
+		}
+		var rec struct {
+			StartedAt string `json:"started_at"`
+			Outcome   string `json:"outcome"`
+		}
+		_ = json.Unmarshal(b, &rec)
+		all = append(all, prunable{name: e.Name(), startedAt: rec.StartedAt, passed: rec.Outcome == "passed"})
+	}
+	if len(all) <= keptAttempts {
+		return ""
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].startedAt != all[j].startedAt {
+			return all[i].startedAt < all[j].startedAt
+		}
+		return all[i].name < all[j].name
+	})
+	newestRefusal := -1
+	for i, p := range all {
+		if !p.passed {
+			newestRefusal = i
+		}
+	}
+	var order []string
+	for _, p := range all {
+		if p.passed {
+			order = append(order, p.name)
+		}
+	}
+	for i, p := range all {
+		if !p.passed && i != newestRefusal {
+			order = append(order, p.name)
+		}
+	}
+	excess := len(all) - keptAttempts
+	if excess > len(order) {
+		excess = len(order)
+	}
+	for _, name := range order[:excess] {
+		if err := os.RemoveAll(filepath.Join(dir, name)); err != nil {
+			msg := strings.Join(strings.Fields(err.Error()), " ")
+			return "Old evidence not removed: " + name + ": " + msg
+		}
+	}
+	return ""
 }
