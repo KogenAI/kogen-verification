@@ -224,6 +224,7 @@ func runStepAs(ctx context.Context, s *sys.Session, tools Tools, name string, l 
 		res, err = RunWatched(s, name, command, l, func() (sys.Result, error) {
 			return s.RunContext(ctx, script, dir, sys.Options{Env: env, KillGroupOnExit: true})
 		})
+		res.Output = attemptFrom(ctx).Redact(res.Output)
 	}
 	if timing != nil {
 		timing.wallMS = time.Since(began).Milliseconds()

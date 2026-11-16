@@ -150,6 +150,23 @@ func TestCohortCancellationAtLaunch(t *testing.T) {
 	}
 }
 
+func TestCohortCheckRedactsOutputInResultAndLog(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	parent := sys.NewWith(testEnv(), dir)
+	log := &memLog{}
+	cmd := "echo password=abc12345; exit 1"
+	result := runCohortCheck(context.Background(), make(chan struct{}), parent, Input{Log: log}, dir, item{name: "lint", command: cmd})
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	eq(t, "output", result.result.Output, "password=[REDACTED]\n")
+	eq(t, "command", result.result.Command, cmd)
+	events := log.named("command_result")
+	eq(t, "events", len(events), 1)
+	eq(t, "event output", events[0]["output"], any("password=[REDACTED]\n"))
+}
+
 func TestCohortCallerInterruptJoins(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -436,6 +436,8 @@ func (p Pass) Feedback(acceptanceRun, completion string) string {
 		completion = "finish"
 	}
 	var parts []feedbackPart
+	mask := (*Redactor)(nil).Redact
+	acceptanceRun = mask(acceptanceRun)
 	add := func(text string, count int) { parts = append(parts, feedbackPart{text, count}) }
 	add(fmt.Sprintf("Verification pass %d is not green. Fix the implementation (the approved acceptance files cannot change), then call %s again.", p.N, completion), 0)
 	problems := func(ps []string, scenarios []ScenarioResult) {
@@ -485,7 +487,8 @@ func (p Pass) Feedback(acceptanceRun, completion string) string {
 	var commands []feedbackItem
 	for _, c := range slices.Concat(p.Setup, p.Checks) {
 		if c.Status != 0 {
-			commands = append(commands, feedbackItem{failing: true, text: fmt.Sprintf("check %s (%s): failed, exit status %d\n%s", c.Name, c.Command, c.Status, indent(Tail(c.Output, 60))), detail: strconv.Itoa(c.Status) + ":" + normalizeFeedback(Tail(c.Output, 60), c.Name), name: c.Name, display: indent(normalizeFeedback(Tail(c.Output, 60), c.Name))})
+			tail := Tail(mask(c.Output), 60)
+			commands = append(commands, feedbackItem{failing: true, text: fmt.Sprintf("check %s (%s): failed, exit status %d\n%s", c.Name, mask(c.Command), c.Status, indent(tail)), detail: strconv.Itoa(c.Status) + ":" + normalizeFeedback(tail, c.Name), name: c.Name, display: indent(normalizeFeedback(tail, c.Name))})
 		}
 	}
 	parts = append(parts, groupFeedback(commands, "checks")...)
@@ -497,12 +500,13 @@ func (p Pass) Feedback(acceptanceRun, completion string) string {
 			add(section.label, 0)
 			var items []feedbackItem
 			for _, r := range section.results {
-				text := fmt.Sprintf("%s (%s): status %d\n%s", r.Name, r.Command, r.Status, indent(Tail(r.Output, 60)))
+				tail := Tail(mask(r.Output), 60)
+				text := fmt.Sprintf("%s (%s): status %d\n%s", r.Name, mask(r.Command), r.Status, indent(tail))
 				if r.Status == 0 {
 					// Passed results remain distinct and are not failing items.
 					items = append(items, feedbackItem{text: text})
 				} else {
-					detail := normalizeFeedback(Tail(r.Output, 60), r.Name)
+					detail := normalizeFeedback(tail, r.Name)
 					items = append(items, feedbackItem{failing: true, text: text, detail: strconv.Itoa(r.Status) + ":" + detail, name: r.Name, display: indent(detail)})
 				}
 			}

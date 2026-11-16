@@ -97,6 +97,7 @@ func runCohortCheck(ctx context.Context, cancelWork <-chan struct{}, parent *sys
 		o.err = parent.Err()
 	}
 	wallMS := time.Since(started).Milliseconds()
+	o.res.Output = attemptFrom(ctx).Redact(o.res.Output)
 	// A missing result after the owned group disappeared is the existing no-progress
 	// rule: there is no process left to join, and the missing result is abandoned.
 	// Otherwise Stop joins cancellation and sweeps groups left by a completed shell.

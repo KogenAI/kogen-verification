@@ -425,6 +425,24 @@ func TestSetupCommandResultsCarryWallTimeAlsoWhenTheCommandFails(t *testing.T) {
 	}
 }
 
+func TestSetupRefusalLinesRedactLabelledOutput(t *testing.T) {
+	isolateTmp(t)
+	p := newProj(t)
+	p.Config.Setup = []string{"echo password=abc12345; exit 4"}
+	r := p.readiness()
+	s, _ := p.session()
+	err := r.Setup(context.Background(), s, p.Root, false)
+	e := failWith(t, err, "environment", "setup_failed")
+	if len(e.Lines) == 0 || e.Lines[0] != "password=[REDACTED]" {
+		t.Fatalf("lines = %q", e.Lines)
+	}
+	for _, line := range e.Lines {
+		if strings.Contains(line, "abc12345") {
+			t.Fatalf("unmasked line %q", line)
+		}
+	}
+}
+
 func TestCancelledSetupCommandStillLogsItsResultWithWallTime(t *testing.T) {
 	isolateTmp(t)
 	p := newProj(t)

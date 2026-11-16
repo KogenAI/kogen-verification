@@ -48,6 +48,33 @@ func TestFeedbackGroupsCommandsAndSections(t *testing.T) {
 	}
 }
 
+func TestFeedbackRedactsCommandAndOutputOfStoredResults(t *testing.T) {
+	t.Parallel()
+	p := Pass{Checks: []CommandResult{{Name: "lint", Command: "lint --token abc123", Status: 1, Output: "login password=abc12345\n"}}}
+	got := p.Feedback("run", "")
+	want := "check lint (lint --token [REDACTED]): failed, exit status 1\n  login password=[REDACTED]"
+	if !strings.Contains(got, want) || strings.Contains(got, "abc123") {
+		t.Fatalf("feedback = %q", got)
+	}
+}
+
+func TestFeedbackRedactsSpeculativeAndCancelledResults(t *testing.T) {
+	t.Parallel()
+	p := Pass{
+		Speculative: []CommandResult{{Name: "vet", Command: "vet --token abc123", Status: 2, Output: "bad password=abc12345\n"}},
+		Cancelled:   []CommandResult{{Name: "slow", Command: "slow --token abc123", Status: -1, Output: "partial password=abc12345\n"}},
+	}
+	got := p.Feedback("run", "")
+	for _, want := range []string{"vet (vet --token [REDACTED]): status 2", "  bad password=[REDACTED]", "slow (slow --token [REDACTED]): status -1", "  partial password=[REDACTED]"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, "abc123") {
+		t.Fatalf("unmasked: %q", got)
+	}
+}
+
 func TestFeedbackInvariantAndSpeculativeFailures(t *testing.T) {
 	t.Parallel()
 	p := Pass{Model: ModelResult{State: "failed", Problems: []string{"model.qnt: invariant first violated (seed 1)\nerror line 12", "model.qnt: invariant second violated (seed 1)\nerror line 25"}}, Speculative: []CommandResult{{Name: "a", Status: 1, Output: "a: error line 12"}, {Name: "b", Status: 1, Output: "b: error line 25"}, {Name: "ok", Output: "success"}, {Name: "ok2", Output: "success"}}}

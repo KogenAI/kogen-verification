@@ -46,6 +46,51 @@ func TestPassRedactsSecretsInProgressAndCommandEventsButRecordsTheConfiguredComm
 	}
 }
 
+func TestPassRedactsCheckOutputInRecordAndLog(t *testing.T) {
+	isolateTmp(t)
+	p := newProj(t)
+	const check = "echo password=abc12345; exit 1"
+	p.Config.Checks = []project.Check{{Name: "lint", Run: check}}
+	s, _ := p.session()
+	log, ev := &memLog{}, newEvidence()
+	in := p.input(1)
+	in.RunDir, in.Log, in.Evidence = filepath.Join(p.Aux, "run"), log, ev
+	pass, err := Run(context.Background(), s, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eq(t, "record output", pass.Checks[0].Output, "password=[REDACTED]\n")
+	eq(t, "record command", pass.Checks[0].Command, check)
+	var out any
+	for _, e := range log.named("command_result") {
+		if e["name"] == "lint" {
+			out = e["output"]
+		}
+	}
+	eq(t, "event output", out, any("password=[REDACTED]\n"))
+	eqSlice(t, "failing", pass.Failing, []string{"lint"})
+}
+
+func TestAcceptanceOutputRedactedInProblems(t *testing.T) {
+	isolateTmp(t)
+	p := newProj(t)
+	p.Config.Acceptance = &project.Acceptance{Run: "echo password=abc12345; exit 2"}
+	s, _ := p.session()
+	in := p.input(1)
+	in.RunDir, in.Log, in.Evidence = filepath.Join(p.Aux, "run"), &memLog{}, newEvidence()
+	pass, err := Run(context.Background(), s, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pass.Acceptance == nil || len(pass.Acceptance.Problems) == 0 {
+		t.Fatalf("acceptance = %+v", pass.Acceptance)
+	}
+	eq(t, "problem", pass.Acceptance.Problems[0], "report_missing: the acceptance command exited 2; its output:\npassword=[REDACTED]")
+	if fb := pass.Feedback("run", ""); strings.Contains(fb, "abc12345") {
+		t.Fatalf("feedback = %s", fb)
+	}
+}
+
 func TestGreenPassRunsEveryItemInOrderOnTheCleanCandidate(t *testing.T) {
 	tmp := isolateTmp(t)
 	p := newProj(t)
