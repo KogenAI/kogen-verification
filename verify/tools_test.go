@@ -134,10 +134,51 @@ func TestRequireRunnerRefusesAnUnavailableRunner(t *testing.T) {
 	e := failWith(t, RequireRunner(context.Background(), s, Tools{}, root, bad), "environment", "acceptance_unavailable")
 	eq(t, "detail", e.Detail, "the runner check failed with status 7; fix commands.acceptance.run in .kogen/project.yaml")
 	eq(t, "exit", e.Exit, 3)
-	eq(t, "excerpt of the output", len(e.Lines), 51)
+	eq(t, "excerpt, command and next lines", len(e.Lines), 53)
 	eq(t, "omitted marker", e.Lines[30], "[... 50 lines omitted ...]")
 	missing := &project.Config{Acceptance: &project.Acceptance{Run: "definitely-not-a-tool"}}
 	failWith(t, RequireRunner(context.Background(), s, Tools{}, root, missing), "environment", "tool_missing")
+}
+
+const runnerExitNext = "next: fix commands.acceptance.run in .kogen/project.yaml (commit the change) so it exits 0 on a feature with no scenarios, then rerun the command that was refused"
+
+func runnerRefusal(t *testing.T, command string) *sys.Error {
+	t.Helper()
+	root := t.TempDir()
+	cfg := &project.Config{Acceptance: &project.Acceptance{Run: command}}
+	return failWith(t, RequireRunner(context.Background(), sys.NewWith(testEnv(), root), Tools{}, root, cfg), "environment", "acceptance_unavailable")
+}
+
+func TestRequireRunnerFailureNamesCommandAndNextStep(t *testing.T) {
+	t.Parallel()
+	e := runnerRefusal(t, "echo boom; exit 7")
+	eq(t, "detail", e.Detail, "the runner check failed with status 7; fix commands.acceptance.run in .kogen/project.yaml")
+	eq(t, "exit", e.Exit, 3)
+	eqSlice(t, "lines", e.Lines, []string{"boom", "commands.acceptance.run: echo boom; exit 7", runnerExitNext})
+}
+
+func TestRequireRunnerSilentFailureHasNoEmptyLine(t *testing.T) {
+	t.Parallel()
+	e := runnerRefusal(t, "sh -c 'exit 3'")
+	eq(t, "detail", e.Detail, "the runner check failed with status 3; fix commands.acceptance.run in .kogen/project.yaml")
+	eqSlice(t, "lines", e.Lines, []string{"commands.acceptance.run: sh -c 'exit 3'", runnerExitNext})
+}
+
+func TestRequireRunnerMissingReportSaysWhatToWrite(t *testing.T) {
+	t.Parallel()
+	e := runnerRefusal(t, "echo hi")
+	eq(t, "detail", e.Detail, "the runner check wrote no report; fix commands.acceptance.run in .kogen/project.yaml")
+	eqSlice(t, "lines", e.Lines, []string{
+		"hi",
+		"commands.acceptance.run: echo hi",
+		"next: fix commands.acceptance.run in .kogen/project.yaml (commit the change) so it writes a Cucumber Messages report to the file named by $KOGEN_ACCEPTANCE_REPORT, then rerun the command that was refused",
+	})
+}
+
+func TestRequireRunnerMasksLabelledSecretsInTheCommand(t *testing.T) {
+	t.Parallel()
+	e := runnerRefusal(t, "true --token abc123 && exit 7")
+	eqSlice(t, "lines", e.Lines, []string{"commands.acceptance.run: true --token [REDACTED] && exit 7", runnerExitNext})
 }
 
 func TestToolsFromInstallResolveNodeAndTheBundledTools(t *testing.T) {

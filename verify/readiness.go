@@ -795,6 +795,8 @@ func (r *Readiness) setupKey(s *sys.Session, root string) (string, error) {
 	return encode(map[string]any{"setup": setup, "head": head, "changes": hex.EncodeToString(sum[:])}), nil
 }
 
+const runnerNoReport = "the runner check wrote no report"
+
 // RunnerCheck runs command, an acceptance command, in dir on a feature with no scenarios
 // (SET-13, SHP-2). It returns "" when the command exits 0 and writes its report, else the
 // reason and the command's output.
@@ -817,7 +819,7 @@ func RunnerCheck(ctx context.Context, s *sys.Session, tools Tools, dir, command 
 	case res.Status != 0:
 		return fmt.Sprintf("the runner check failed with status %d", res.Status), res.Output, nil
 	case !isRegular(report):
-		return "the runner check wrote no report", res.Output, nil
+		return runnerNoReport, res.Output, nil
 	}
 	return "", res.Output, nil
 }
@@ -837,7 +839,14 @@ func RequireRunner(ctx context.Context, s *sys.Session, tools Tools, root string
 		return err
 	}
 	e := sys.Fail("environment", "acceptance_unavailable", reason+"; fix commands.acceptance.run in .kogen/project.yaml", 3)
-	e.Lines = strings.Split(Excerpt(output), "\n")
+	if strings.TrimSpace(output) != "" {
+		e.Lines = strings.Split(Excerpt(output), "\n")
+	}
+	next := "fix commands.acceptance.run in .kogen/project.yaml (commit the change) so it exits 0 on a feature with no scenarios, then rerun the command that was refused"
+	if reason == runnerNoReport {
+		next = "fix commands.acceptance.run in .kogen/project.yaml (commit the change) so it writes a Cucumber Messages report to the file named by $KOGEN_ACCEPTANCE_REPORT, then rerun the command that was refused"
+	}
+	e.Lines = append(e.Lines, "commands.acceptance.run: "+(*Redactor)(nil).Redact(command), "next: "+next)
 	return e
 }
 
