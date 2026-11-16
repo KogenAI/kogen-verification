@@ -205,3 +205,81 @@ func TestInstallToolFailuresAndPriority(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+const nopeToolNext = "next: install nope-tool or change that command in .kogen/project.yaml (commit the change), then rerun the command that was refused"
+
+func requireMissing(t *testing.T, cfg *project.Config, detail string) *sys.Error {
+	t.Helper()
+	root := t.TempDir()
+	e := failWith(t, RequireTools(sys.NewWith(testEnv(), root), Tools{}, root, cfg, true), "environment", "tool_missing")
+	eq(t, "detail", e.Detail, detail)
+	eq(t, "exit", e.Exit, 3)
+	return e
+}
+
+func TestToolMissingNamesTheCheckAndNextStep(t *testing.T) {
+	t.Parallel()
+	e := requireMissing(t, configWith("nope-tool --x"), "nope-tool is not available")
+	eqSlice(t, "lines", e.Lines, []string{"commands.checks[ca]: nope-tool --x", nopeToolNext})
+}
+
+func TestToolMissingNamesEveryCommandThatNeedsTheProgram(t *testing.T) {
+	t.Parallel()
+	cfg := &project.Config{
+		Setup:      []string{"true", "nope-tool install"},
+		Fix:        []string{"nope-tool fmt"},
+		Checks:     []project.Check{{Name: "cb", Run: "nope-tool test"}, {Name: "other", Run: "true"}},
+		Acceptance: &project.Acceptance{Run: "nope-tool accept"},
+	}
+	e := requireMissing(t, cfg, "nope-tool is not available")
+	eqSlice(t, "lines", e.Lines, []string{
+		"commands.setup[1]: nope-tool install",
+		"commands.fix[0]: nope-tool fmt",
+		"commands.checks[cb]: nope-tool test",
+		"commands.acceptance.run: nope-tool accept",
+		nopeToolNext,
+	})
+}
+
+func TestToolMissingMasksLabelledSecretsInTheCommand(t *testing.T) {
+	t.Parallel()
+	e := requireMissing(t, configWith("nope-tool --token abc123"), "nope-tool is not available")
+	eqSlice(t, "lines", e.Lines, []string{"commands.checks[ca]: nope-tool --token [REDACTED]", nopeToolNext})
+}
+
+func TestRequireRunnerNamesTheAcceptanceCommandWhenItsProgramIsMissing(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	cfg := &project.Config{Acceptance: &project.Acceptance{Run: "definitely-not-a-tool"}}
+	err := RequireRunner(context.Background(), sys.NewWith(testEnv(), root), Tools{}, root, cfg)
+	e := failWith(t, err, "environment", "tool_missing")
+	eq(t, "detail", e.Detail, "definitely-not-a-tool is not available")
+	eqSlice(t, "lines", e.Lines, []string{
+		"commands.acceptance.run: definitely-not-a-tool",
+		"next: install definitely-not-a-tool or change that command in .kogen/project.yaml (commit the change), then rerun the command that was refused",
+	})
+}
+
+func TestToolMissingKogenNodeSaysReinstall(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	cfg := configWith(`"$KOGEN_NODE" --version`)
+	e := failWith(t, RequireTools(sys.NewWith(append(testEnv(), "KOGEN_NODE="), root), Tools{Node: filepath.Join(root, "no-node")}, root, cfg, true), "environment", "tool_missing")
+	eq(t, "detail", e.Detail, "$KOGEN_NODE is not available")
+	eqSlice(t, "lines", e.Lines, []string{
+		`commands.checks[ca]: "$KOGEN_NODE" --version`,
+		"next: reinstall Kogen, then rerun the command that was refused",
+	})
+}
+
+func TestMissingGitSaysInstallGit(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	empty := t.TempDir()
+	s := sys.NewWith(testEnv("PATH="+empty), root)
+	for _, configured := range []bool{false, true} {
+		e := failWith(t, RequireTools(s, Tools{}, root, configWith("git status"), configured), "environment", "tool_missing")
+		eq(t, "detail", e.Detail, "git is not available")
+		eqSlice(t, "lines", e.Lines, []string{"next: install git, then rerun the command that was refused"})
+	}
+}

@@ -587,9 +587,11 @@ func RequireTools(s *sys.Session, tools Tools, root string, cfg *project.Config,
 		return sys.Fail("environment", "tool_missing", "/bin/sh is not available", 3)
 	}
 	var words []string
+	var owners []configuredCommand
 	if configured {
-		for _, nc := range cfg.NamedCommands() {
-			parts, err := shellWords(nc.Run)
+		owners = configuredCommands(cfg)
+		for i, c := range owners {
+			parts, err := shellWords(c.run)
 			if err != nil {
 				return err
 			}
@@ -604,6 +606,7 @@ func RequireTools(s *sys.Session, tools Tools, root string, cfg *project.Config,
 			}
 			if len(clean) > 0 {
 				words = append(words, clean[0])
+				owners[i].word = clean[0]
 			}
 		}
 	}
@@ -624,10 +627,55 @@ func RequireTools(s *sys.Session, tools Tools, root string, cfg *project.Config,
 		cmd.Dir = root
 		cmd.Env = append(slices.Clone(s.Env), "PATH="+s.Getenv("PATH"))
 		if err := cmd.Run(); err != nil {
-			return sys.Fail("environment", "tool_missing", word+" is not available", 3)
+			e := sys.Fail("environment", "tool_missing", word+" is not available", 3)
+			e.Lines = missingToolLines(word, owners)
+			return e
 		}
 	}
 	return nil
+}
+
+// configuredCommand is a configured command with its key in .kogen/project.yaml and, once
+// RequireTools has read it, its first program word.
+type configuredCommand struct{ key, run, word string }
+
+// configuredCommands lists the configured commands in the order Kogen runs them: setup, fix,
+// checks, then acceptance.
+func configuredCommands(cfg *project.Config) []configuredCommand {
+	var out []configuredCommand
+	for i, run := range cfg.Setup {
+		out = append(out, configuredCommand{key: fmt.Sprintf("commands.setup[%d]", i), run: run})
+	}
+	for i, run := range cfg.Fix {
+		out = append(out, configuredCommand{key: fmt.Sprintf("commands.fix[%d]", i), run: run})
+	}
+	for _, ch := range cfg.Checks {
+		out = append(out, configuredCommand{key: "commands.checks[" + ch.Name + "]", run: ch.Run})
+	}
+	if cfg.Acceptance != nil && cfg.Acceptance.Run != "" {
+		out = append(out, configuredCommand{key: "commands.acceptance.run", run: cfg.Acceptance.Run})
+	}
+	return out
+}
+
+// missingToolLines names each configured command that starts with the missing word, then the
+// next step.
+func missingToolLines(word string, owners []configuredCommand) []string {
+	var lines []string
+	if word != "git" {
+		for _, c := range owners {
+			if c.word == word {
+				lines = append(lines, c.key+": "+(*Redactor)(nil).Redact(c.run))
+			}
+		}
+	}
+	switch word {
+	case "git":
+		return append(lines, "next: install git, then rerun the command that was refused")
+	case "$KOGEN_NODE":
+		return append(lines, "next: reinstall Kogen, then rerun the command that was refused")
+	}
+	return append(lines, "next: install "+word+" or change that command in .kogen/project.yaml (commit the change), then rerun the command that was refused")
 }
 
 // Setup runs `commands.setup` in order in root; the first failure refuses with
