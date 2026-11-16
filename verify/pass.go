@@ -348,7 +348,17 @@ func (p Pass) Summary() string {
 	case p.Green:
 		what = "all checks passed"
 	case len(p.Failing) > 0:
-		what = strings.Join(p.Failing, ", ") + " failed"
+		items := make([]string, 0, len(p.Failing))
+		for _, item := range p.Failing {
+			for _, c := range p.Checks {
+				if c.Name == item && c.Status != 0 {
+					item = fmt.Sprintf("%s (exit %d)", item, c.Status)
+					break
+				}
+			}
+			items = append(items, item)
+		}
+		what = strings.Join(items, ", ") + " failed"
 		if p.Acceptance != nil && len(p.Acceptance.Scenarios) > 0 {
 			for _, item := range p.Failing {
 				if item == "acceptance" {

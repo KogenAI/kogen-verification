@@ -181,6 +181,10 @@ func TestPassSummaryProgressLine(t *testing.T) {
 		{Pass{N: 3, Moved: []string{"a", "b"}}, "kogen: pass 3: files changed while the checks ran: a, b"},
 		{Pass{N: 4, Failing: []string{"setup-1"}, NotRun: []string{"setup-2", "acceptance", "z-first", "a-later"}},
 			"kogen: pass 4: setup-1 failed; not run because an earlier item failed: setup-2, acceptance, z-first, a-later"},
+		{Pass{N: 1, Failing: []string{"test"}, Checks: []CommandResult{{Name: "test", Status: 1}}}, "kogen: pass 1: test (exit 1) failed"},
+		{Pass{N: 2, Failing: []string{"lint", "test"}, Checks: []CommandResult{{Name: "lint", Status: 2}, {Name: "test", Status: 1}}}, "kogen: pass 2: lint (exit 2), test (exit 1) failed"},
+		{Pass{N: 3, Failing: []string{"acceptance"}, Checks: []CommandResult{{Name: "lint", Status: 0}}}, "kogen: pass 3: acceptance failed"},
+		{Pass{N: 4, Failing: []string{"lint", "acceptance"}, Checks: []CommandResult{{Name: "lint", Status: 3}}, NotRun: []string{"test"}}, "kogen: pass 4: lint (exit 3), acceptance failed; not run because an earlier item failed: test"},
 	} {
 		eq(t, "summary", c.p.Summary(), c.want)
 	}

@@ -98,7 +98,7 @@ func TestSpecUpdateInResultsAndFeedback(t *testing.T) {
 	required := flaggedPass
 	required.Failing = []string{"lint", line}
 	eq(t, "required feedback count", strings.Count(required.Feedback("acc", ""), line), 1)
-	eq(t, "required summary", required.Summary(), "kogen: pass 2: lint, "+line+" failed; not run because an earlier item failed: later")
+	eq(t, "required summary", required.Summary(), "kogen: pass 2: lint (exit 1), "+line+" failed; not run because an earlier item failed: later")
 }
 
 func TestSpecUpdateJSON(t *testing.T) {
