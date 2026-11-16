@@ -17,6 +17,29 @@ func shortenGrace(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { noLiveGrace = old })
 }
 
+func TestVerifyEndedCommandNoticedRedactsTheCommand(t *testing.T) {
+	shortenGrace(t, 50*time.Millisecond)
+	root := t.TempDir()
+	s := sys.NewWith(testEnv(), root)
+	const command = "printf done --token abc123"
+	before := groupSet(s)
+	if _, err := s.Run(command, root, sys.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	log := &memLog{}
+	_, err := awaitResult(s, before, "acceptance", command, log, make(chan outcome))
+	e, ok := sys.AsError(err)
+	if !ok || e.Reason != "command_no_progress" {
+		t.Fatalf("error = %v", err)
+	}
+	eq(t, "detail", e.Detail, "acceptance had no live process for 50ms but its result never reached Kogen; stopped waiting for: printf done --token [REDACTED]")
+	events := log.named("command_no_progress")
+	if len(events) != 1 {
+		t.Fatalf("events = %v", log.events)
+	}
+	eq(t, "command", events[0]["command"], any("printf done --token [REDACTED]"))
+}
+
 func TestVerifyEndedCommandNoticed(t *testing.T) {
 	shortenGrace(t, 50*time.Millisecond)
 	root := t.TempDir()

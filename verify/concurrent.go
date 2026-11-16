@@ -56,7 +56,7 @@ func runCohortCheck(ctx context.Context, cancelWork <-chan struct{}, parent *sys
 	for k, v := range env {
 		s.Env = append(s.Env, k+"="+v)
 	}
-	logEvent(in.Log, map[string]any{"event": "command", "name": it.name, "command": it.command, "cwd": dir})
+	logEvent(in.Log, map[string]any{"event": "command", "name": it.name, "command": attemptFrom(ctx).Redact(it.command), "cwd": dir})
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stopInterrupt := context.AfterFunc(parent.Context(), cancel)

@@ -47,6 +47,7 @@ func groupSet(s *sys.Session) map[int]bool {
 // checked at least once per second. Without a new group (the start failed, or a number was
 // reused) the rule does not apply and the wait is for the result alone.
 func awaitResult(s *sys.Session, before map[int]bool, name, command string, l Logger, result <-chan outcome) (sys.Result, error) {
+	command = (*Redactor)(nil).Redact(command)
 	grace := noLiveGrace
 	tick := time.NewTicker(max(5*time.Millisecond, min(time.Second, grace/4)))
 	defer tick.Stop()

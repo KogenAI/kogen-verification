@@ -92,7 +92,7 @@ func Run(ctx context.Context, s *sys.Session, in Input) (Pass, error) {
 func Fix(ctx context.Context, s *sys.Session, in Input) error {
 	for i, cmd := range in.Config.Fix {
 		name := fmt.Sprintf("fix-%d", i+1)
-		logEvent(in.Log, map[string]any{"event": "command", "name": name, "command": cmd})
+		logEvent(in.Log, map[string]any{"event": "command", "name": name, "command": attemptFrom(ctx).Redact(cmd)})
 		timed, timing := timedContext(ctx)
 		r, err := runStep(timed, s, in.Tools, name, in.Log, cmd, in.Root, nil)
 		if timing.started {
@@ -402,7 +402,7 @@ func verify(ctx context.Context, s *sys.Session, in Input, tr *passTrace) (Pass,
 				red = m.Failed()
 			default:
 				if it.kind == "setup" {
-					s.Progress(fmt.Sprintf("kogen: running %s: %s", it.name, it.command))
+					s.Progress(fmt.Sprintf("kogen: running %s: %s", it.name, attemptFrom(ctx).Redact(it.command)))
 					count(in.Evidence, "setup")
 				}
 				r, err := runLogged(ctx, s, in, scratch, it.name, it.command, it.report)
@@ -506,7 +506,7 @@ func unique(paths []string) []string {
 }
 
 func runLogged(ctx context.Context, s *sys.Session, in Input, dir, name, command, report string) (CommandResult, error) {
-	logEvent(in.Log, map[string]any{"event": "command", "name": name, "command": command, "cwd": dir})
+	logEvent(in.Log, map[string]any{"event": "command", "name": name, "command": attemptFrom(ctx).Redact(command), "cwd": dir})
 	var env map[string]string
 	if report != "" {
 		env = map[string]string{"KOGEN_CHECK_REPORT": report}
@@ -557,7 +557,7 @@ func runFeature(ctx context.Context, s *sys.Session, root string, tools Tools, f
 		}
 		return Acceptance{}, err
 	}
-	logEvent(log, map[string]any{"event": "command", "name": "acceptance", "command": command})
+	logEvent(log, map[string]any{"event": "command", "name": "acceptance", "command": attemptFrom(ctx).Redact(command)})
 	timed, timing := timedContext(withStep(ctx, "acceptance", "acceptance"))
 	r, err := runStepAs(timed, s, tools, "acceptance", log, command, root, map[string]string{
 		"KOGEN_ACCEPTANCE_FEATURES": feature,

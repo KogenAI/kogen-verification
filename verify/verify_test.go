@@ -16,6 +16,36 @@ import (
 	"github.com/KogenAI/kogen-loop/sys"
 )
 
+func TestPassRedactsSecretsInProgressAndCommandEventsButRecordsTheConfiguredCommands(t *testing.T) {
+	isolateTmp(t)
+	p := newProj(t)
+	const setup, check = "true --token abc123", "true password=abc12345"
+	p.Config.Setup = []string{setup}
+	p.Config.Checks = []project.Check{{Name: "lint", Run: check}}
+	s, stderr := p.session()
+	log, ev := &memLog{}, newEvidence()
+	in := p.input(1)
+	in.RunDir, in.Log, in.Evidence = filepath.Join(p.Aux, "run"), log, ev
+	pass, err := Run(context.Background(), s, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "kogen: running setup-1: true --token [REDACTED]\n") || strings.Contains(stderr.String(), "abc123") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	commands := map[string]any{}
+	for _, e := range log.named("command") {
+		commands[e["name"].(string)] = e["command"]
+	}
+	eq(t, "setup event", commands["setup-1"], any("true --token [REDACTED]"))
+	eq(t, "check event", commands["lint"], any("true password=[REDACTED]"))
+	eq(t, "setup record", pass.Setup[0].Command, setup)
+	eq(t, "check record", pass.Checks[0].Command, check)
+	if !pass.Complete(p.Config, mustScenarios(t), nil) {
+		t.Fatal("pass is complete")
+	}
+}
+
 func TestGreenPassRunsEveryItemInOrderOnTheCleanCandidate(t *testing.T) {
 	tmp := isolateTmp(t)
 	p := newProj(t)
@@ -105,7 +135,7 @@ func TestFailedSetupRetainsEvidenceAndNamesLaterSetupAndGatesWithoutAnAbsentMode
 	}
 	eqSlice(t, "not run", pass.NotRun, names)
 	eqSlice(t, "failing", pass.Failing, []string{"setup-1"})
-	contains(t, "progress", stderr.String(), "kogen: pass 1: setup-1 failed; not run because an earlier item failed: setup-2, acceptance, z-first, a-later\n")
+	contains(t, "progress", stderr.String(), "kogen: pass 1: setup-1 (exit 23) failed; not run because an earlier item failed: setup-2, acceptance, z-first, a-later\n")
 	events := log.named("pass")
 	if len(events) != 1 || events[0]["green"] != false || !slices.Equal(events[0]["failing"].([]string), []string{"setup-1"}) ||
 		!slices.Equal(events[0]["not_run"].([]string), names) {

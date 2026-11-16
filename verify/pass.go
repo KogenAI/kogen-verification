@@ -350,10 +350,14 @@ func (p Pass) Summary() string {
 	case len(p.Failing) > 0:
 		items := make([]string, 0, len(p.Failing))
 		for _, item := range p.Failing {
-			for _, c := range p.Checks {
-				if c.Name == item && c.Status != 0 {
-					item = fmt.Sprintf("%s (exit %d)", item, c.Status)
-					break
+			name := item
+		lookup:
+			for _, results := range [][]CommandResult{p.Setup, p.Checks} {
+				for _, c := range results {
+					if c.Name == name && c.Status != 0 {
+						item = fmt.Sprintf("%s (exit %d)", name, c.Status)
+						break lookup
+					}
 				}
 			}
 			items = append(items, item)
