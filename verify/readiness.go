@@ -261,23 +261,52 @@ func intValue(v any) (int, bool) {
 // Current reports whether the complete checked baseline, HEAD and candidate tree, and the
 // feasibility proof, still identify this readiness result.
 func (r *Readiness) Current(s *sys.Session, slug string, ready *Ready) bool {
+	return ready != nil && len(r.changedInputs(s, slug, ready)) == 0
+}
+
+func (r *Readiness) changedInputs(s *sys.Session, slug string, ready *Ready) []string {
 	if ready == nil {
-		return false
+		return nil
 	}
 	in, err := r.inputs(s, slug)
 	if err != nil {
-		return false
+		return []string{"unreadable inputs"}
 	}
-	return slices.Equal(in.baseline, ready.Baseline) && in.sha == ready.SHA256 && in.head == ready.Head && in.tree == ready.CandidateTree &&
-		Valid(r.Root, ready.Intent, ready.Feasibility)
+	var changed []string
+	if !slices.Equal(in.baseline, ready.Baseline) {
+		changed = append(changed, "baseline files")
+	}
+	if in.sha != ready.SHA256 {
+		changed = append(changed, "baseline contents")
+	}
+	if in.head != ready.Head {
+		changed = append(changed, "HEAD")
+	}
+	if in.tree != ready.CandidateTree {
+		changed = append(changed, "candidate tree")
+	}
+	if !Valid(r.Root, ready.Intent, ready.Feasibility) {
+		changed = append(changed, "feasibility evidence")
+	}
+	return changed
+}
+
+func changedLines(changed []string) []string {
+	if len(changed) == 0 {
+		return nil
+	}
+	return []string{
+		"changed: " + strings.Join(changed, ", "),
+		"next: stop whatever changed the checkout while Kogen was checking, then rerun the command that was refused",
+	}
 }
 
 // RecordPass publishes the original successful evidence only when the complete checked
 // inputs still match, before and after writing it; then it refreshes the package facts.
 func (r *Readiness) RecordPass(s *sys.Session, slug string, ready *Ready) error {
-	if !r.Current(s, slug, ready) {
+	if changed := r.changedInputs(s, slug, ready); ready == nil || len(changed) > 0 {
 		e := sys.Fail("intent", "not_ready", "the Intent is not ready to build", 1)
-		e.Lines = []string{"readiness inputs changed during checking or publication"}
+		e.Lines = append([]string{"readiness inputs changed during checking or publication"}, changedLines(changed)...)
 		return e
 	}
 	path := readinessPath(r.Root, slug)
@@ -306,9 +335,11 @@ func (r *Readiness) RecordPass(s *sys.Session, slug string, ready *Ready) error 
 	if err := os.WriteFile(path, append(b, '\n'), 0o666); err != nil {
 		return err
 	}
-	if !r.Current(s, slug, ready) {
+	if changed := r.changedInputs(s, slug, ready); len(changed) > 0 {
 		os.Remove(path)
-		return sys.Fail("intent", "not_ready", "readiness inputs changed during publication", 1)
+		e := sys.Fail("intent", "not_ready", "readiness inputs changed during publication", 1)
+		e.Lines = changedLines(changed)
+		return e
 	}
 	return project.WritePackageFacts(r.Root, slug, r.Config)
 }

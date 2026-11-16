@@ -205,7 +205,7 @@ func one2(want ...string) func(*testing.T, []string) {
 	return func(t *testing.T, lines []string) { eqSlice(t, "lines", lines, want) }
 }
 
-func TestReadinessRecordIsRefusedWhenItsInputsChangedDuringChecking(t *testing.T) {
+func TestRecordPassRefusalListsEveryChangedInput(t *testing.T) {
 	isolateTmp(t)
 	p := newProj(t)
 	r := p.readiness()
@@ -214,11 +214,70 @@ func TestReadinessRecordIsRefusedWhenItsInputsChangedDuringChecking(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Remove(readinessPath(p.Root, fixtureSlug))
+	if err := os.Remove(readinessPath(p.Root, fixtureSlug)); err != nil {
+		t.Fatal(err)
+	}
 	p.write(project.FeaturePath(fixtureSlug), fixtureFeature+"  Scenario: Third\n    Then the candidate succeeds\n")
 	e := failWith(t, r.RecordPass(s, fixtureSlug, ready), "intent", "not_ready")
 	eq(t, "detail", e.Detail, "the Intent is not ready to build")
-	eqSlice(t, "lines", e.Lines, []string{"readiness inputs changed during checking or publication"})
+	eq(t, "exit", e.Exit, 1)
+	eqSlice(t, "lines", e.Lines, []string{
+		"readiness inputs changed during checking or publication",
+		"changed: baseline contents, candidate tree",
+		"next: stop whatever changed the checkout while Kogen was checking, then rerun the command that was refused",
+	})
+	if _, ok := p.readinessRecord(); ok {
+		t.Fatal("no record is published for changed inputs")
+	}
+}
+
+func TestRecordPassRefusalNamesTheCandidateTree(t *testing.T) {
+	isolateTmp(t)
+	p := newProj(t)
+	r := p.readiness()
+	s, _ := p.session()
+	ready, err := r.Check(context.Background(), s, fixtureSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(readinessPath(p.Root, fixtureSlug)); err != nil {
+		t.Fatal(err)
+	}
+	p.write("extra.txt", "x")
+	e := failWith(t, r.RecordPass(s, fixtureSlug, ready), "intent", "not_ready")
+	eq(t, "detail", e.Detail, "the Intent is not ready to build")
+	eq(t, "exit", e.Exit, 1)
+	eqSlice(t, "lines", e.Lines, []string{
+		"readiness inputs changed during checking or publication",
+		"changed: candidate tree",
+		"next: stop whatever changed the checkout while Kogen was checking, then rerun the command that was refused",
+	})
+	if _, ok := p.readinessRecord(); ok {
+		t.Fatal("no record is published for changed inputs")
+	}
+}
+
+func TestRecordPassRefusalNamesHead(t *testing.T) {
+	isolateTmp(t)
+	p := newProj(t)
+	r := p.readiness()
+	s, _ := p.session()
+	ready, err := r.Check(context.Background(), s, fixtureSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(readinessPath(p.Root, fixtureSlug)); err != nil {
+		t.Fatal(err)
+	}
+	p.git("commit", "--allow-empty", "-m", "move HEAD")
+	e := failWith(t, r.RecordPass(s, fixtureSlug, ready), "intent", "not_ready")
+	eq(t, "detail", e.Detail, "the Intent is not ready to build")
+	eq(t, "exit", e.Exit, 1)
+	eqSlice(t, "lines", e.Lines, []string{
+		"readiness inputs changed during checking or publication",
+		"changed: HEAD",
+		"next: stop whatever changed the checkout while Kogen was checking, then rerun the command that was refused",
+	})
 	if _, ok := p.readinessRecord(); ok {
 		t.Fatal("no record is published for changed inputs")
 	}
