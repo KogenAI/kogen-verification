@@ -285,3 +285,99 @@ func TestIdentityVersionLineCapBoundary(t *testing.T) {
 		t.Fatal(tool)
 	}
 }
+
+type reuseTestLog struct{ events []map[string]any }
+
+func (l *reuseTestLog) Log(e map[string]any) { l.events = append(l.events, e) }
+
+func reuseTestIdentity(tree string, env ...string) checkIdentity {
+	dir := os.TempDir()
+	id := snapshotIdentity(sys.NewWith(append([]string{"PATH=/nonexistent-reuse-bin"}, env...), dir), Tools{}, tree, dir)
+	id.Lockfiles = []identityLock{{Path: "go.sum", SHA256: "a"}}
+	id.Host = identityHost{Arch: "amd64", OS: "linux"}
+	return id
+}
+
+func reuseTestEvent(id checkIdentity) map[string]any {
+	log := &reuseTestLog{}
+	(&identityLogger{inner: log, identity: id}).Log(map[string]any{"event": "command", "command": "go build ./..."})
+	return log.events[0]
+}
+
+func reuseTestKey(t *testing.T, id checkIdentity) string {
+	t.Helper()
+	key, ok := reuseTestEvent(id)["reuse_sha256"].(string)
+	if !ok || len(key) != 64 || strings.ToLower(key) != key {
+		t.Fatalf("reuse_sha256 = %v", reuseTestEvent(id)["reuse_sha256"])
+	}
+	return key
+}
+
+func TestReuseKeyIgnoresAttemptVariables(t *testing.T) {
+	t.Parallel()
+	a := reuseTestIdentity("tree", "KOGEN_ATTEMPT_ID=1", "KOGEN_GENERATION=1", "KL_LOOP=a", "KL_ONLY_A=x", "KEEP=same")
+	b := reuseTestIdentity("tree", "KOGEN_ATTEMPT_ID=2", "KOGEN_GENERATION=2", "KL_LOOP=b", "KEEP=same")
+	if reuseTestKey(t, a) != reuseTestKey(t, b) {
+		t.Fatal("per-attempt variables changed reuse_sha256")
+	}
+	if reuseTestEvent(a)["identity_sha256"] == reuseTestEvent(b)["identity_sha256"] {
+		t.Fatal("identity_sha256 should still see the per-attempt variables")
+	}
+	for _, other := range []string{"KEEP=different", "KOGEN_OTHER=x", "KOGEN_ATTEMPT_ID_X=x"} {
+		if reuseTestKey(t, reuseTestIdentity("tree", "KEEP=same")) == reuseTestKey(t, reuseTestIdentity("tree", other)) {
+			t.Fatalf("%s did not change reuse_sha256", other)
+		}
+	}
+}
+
+func TestReuseKeyEnvironmentIsSortedPairs(t *testing.T) {
+	t.Parallel()
+	id := reuseTestIdentity("tree", "Z=1", "KL_X=1", "A=2")
+	want := identityHash([]any{"go build ./...", id.Tree, id.Tools, id.Lockfiles, [][2]string{{"A", "2"}, {"PATH", "/nonexistent-reuse-bin"}, {"Z", "1"}}, id.Host})
+	if got := reuseTestKey(t, id); got != want {
+		t.Fatalf("reuse_sha256 = %s, want %s", got, want)
+	}
+	empty := snapshotIdentity(sys.NewWith([]string{"KL_X=1", "KOGEN_ATTEMPT_ID=1", "KOGEN_GENERATION=1"}, ""), Tools{}, "tree", t.TempDir())
+	want = identityHash([]any{"go build ./...", empty.Tree, empty.Tools, empty.Lockfiles, []any{}, empty.Host})
+	if got := reuseTestKey(t, empty); got != want {
+		t.Fatalf("empty environment: reuse_sha256 = %s, want %s", got, want)
+	}
+}
+
+func TestReuseKeyChangesWithTreeToolsLockfilesHostAndPath(t *testing.T) {
+	t.Parallel()
+	version, other := "go version go1.27.2", "go version go1.27.3"
+	fresh := func() checkIdentity {
+		id := reuseTestIdentity("tree")
+		id.Tools[0].Status, id.Tools[0].Version = "ok", &version
+		return id
+	}
+	for name, change := range map[string]func(*checkIdentity){
+		"tree":         func(id *checkIdentity) { id.Tree = "other" },
+		"tool version": func(id *checkIdentity) { id.Tools[0].Version = &other },
+		"lockfile":     func(id *checkIdentity) { id.Lockfiles[0].SHA256 = "b" },
+		"host arch":    func(id *checkIdentity) { id.Host.Arch = "arm64" },
+	} {
+		b := fresh()
+		change(&b)
+		if reuseTestKey(t, fresh()) == reuseTestKey(t, b) {
+			t.Errorf("reuse_sha256 unchanged when only the %s differs", name)
+		}
+	}
+	a := snapshotIdentity(sys.NewWith([]string{"PATH=/nonexistent-a"}, ""), Tools{}, "tree", t.TempDir())
+	b := snapshotIdentity(sys.NewWith([]string{"PATH=/nonexistent-b"}, ""), Tools{}, "tree", t.TempDir())
+	if reuseTestKey(t, a) == reuseTestKey(t, b) {
+		t.Error("reuse_sha256 unchanged when only PATH differs")
+	}
+}
+
+func TestIdentityEventKeepsSixFieldsAndOldHash(t *testing.T) {
+	t.Parallel()
+	id := reuseTestIdentity("tree", "KOGEN_ATTEMPT_ID=7", "KL_LOOP=x")
+	if len(id.event()) != 6 {
+		t.Fatal(id.event())
+	}
+	if got, want := reuseTestEvent(id)["identity_sha256"], identityHash([]any{"go build ./...", id.Tree, id.Tools, id.Lockfiles, id.Environment, id.Host}); got != want {
+		t.Fatalf("identity_sha256 = %v, want %s", got, want)
+	}
+}

@@ -42,6 +42,9 @@ type checkIdentity struct {
 	Lockfiles   []identityLock
 	Environment identityEnvironment
 	Host        identityHost
+	// reuseEnvironment is the sorted [name, value] pairs left after dropping the per-attempt
+	// variables; it is set by snapshotIdentity and read by identityLogger.Log for reuse_sha256.
+	reuseEnvironment [][2]string
 }
 
 func canonicalJSON(v any) []byte {
@@ -78,7 +81,7 @@ func identityHash(v any) string {
 	return hex.EncodeToString(h[:])
 }
 func bytesHash(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
-func stableEnvironment(s *sys.Session, tools Tools) (identityEnvironment, []string, string) {
+func environmentValues(s *sys.Session, tools Tools) map[string]string {
 	values := map[string]string{}
 	for _, e := range s.Env {
 		if k, v, ok := strings.Cut(e, "="); ok {
@@ -88,10 +91,41 @@ func stableEnvironment(s *sys.Session, tools Tools) (identityEnvironment, []stri
 	for k, v := range tools.env() {
 		values[k] = v
 	}
-	path := values["PATH"]
 	for _, k := range []string{"KOGEN_STEP_RUN", "KOGEN_ACCEPTANCE_RUN", "KOGEN_CHECK_REPORT", "KOGEN_ACCEPTANCE_REPORT"} {
 		delete(values, k)
 	}
+	return values
+}
+
+// perAttemptVariable reports whether the loop sets name differently for each attempt.
+func perAttemptVariable(name string) bool {
+	return strings.HasPrefix(name, "KL_") || name == "KOGEN_ATTEMPT_ID" || name == "KOGEN_GENERATION"
+}
+
+// reuseEnvironment lists the sorted [name, value] pairs without the per-attempt variables.
+func reuseEnvironment(values map[string]string) [][2]string {
+	names := make([]string, 0, len(values))
+	for k := range values {
+		if !perAttemptVariable(k) {
+			names = append(names, k)
+		}
+	}
+	sort.Strings(names)
+	pairs := make([][2]string, 0, len(names))
+	for _, k := range names {
+		pairs = append(pairs, [2]string{k, values[k]})
+	}
+	return pairs
+}
+
+func stableEnvironment(s *sys.Session, tools Tools) (identityEnvironment, []string, string) {
+	env, processEnv, path, _ := stableEnvironmentValues(s, tools)
+	return env, processEnv, path
+}
+
+func stableEnvironmentValues(s *sys.Session, tools Tools) (identityEnvironment, []string, string, [][2]string) {
+	values := environmentValues(s, tools)
+	path := values["PATH"]
 	names := make([]string, 0, len(values))
 	for k := range values {
 		names = append(names, k)
@@ -103,7 +137,7 @@ func stableEnvironment(s *sys.Session, tools Tools) (identityEnvironment, []stri
 		pairs = append(pairs, [2]string{k, values[k]})
 		env = append(env, k+"="+values[k])
 	}
-	return identityEnvironment{names, identityHash(pairs)}, env, path
+	return identityEnvironment{names, identityHash(pairs)}, env, path, reuseEnvironment(values)
 }
 
 type limitedOutput struct{ b []byte }
@@ -195,8 +229,8 @@ func probeIdentityTool(name, path, dir string, env []string) identityTool {
 	return t
 }
 func snapshotIdentity(s *sys.Session, tools Tools, tree, dir string) checkIdentity {
-	env, processEnv, path := stableEnvironment(s, tools)
-	id := checkIdentity{Tree: tree, Tools: []identityTool{}, Lockfiles: []identityLock{}, Environment: env, Host: identityHost{runtime.GOARCH, runtime.GOOS}}
+	env, processEnv, path, reuseEnv := stableEnvironmentValues(s, tools)
+	id := checkIdentity{Tree: tree, Tools: []identityTool{}, Lockfiles: []identityLock{}, Environment: env, Host: identityHost{runtime.GOARCH, runtime.GOOS}, reuseEnvironment: reuseEnv}
 	for _, name := range []string{"go", "node", "npm", "ruby", "bundle", "python3", "elixir", "erl", "mix", "git", "quint"} {
 		id.Tools = append(id.Tools, probeIdentityTool(name, path, dir, processEnv))
 	}
@@ -216,6 +250,7 @@ type identityLogger struct {
 func (l *identityLogger) Log(e map[string]any) {
 	if e["event"] == "command" {
 		e["identity_sha256"] = identityHash([]any{e["command"], l.identity.Tree, l.identity.Tools, l.identity.Lockfiles, l.identity.Environment, l.identity.Host})
+		e["reuse_sha256"] = identityHash([]any{e["command"], l.identity.Tree, l.identity.Tools, l.identity.Lockfiles, l.identity.reuseEnvironment, l.identity.Host})
 	}
 	l.inner.Log(e)
 }
