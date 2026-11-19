@@ -242,6 +242,31 @@ func snapshotIdentity(s *sys.Session, tools Tools, tree, dir string) checkIdenti
 	return id
 }
 
+// ReuseSnapshot holds what the check reuse key hashes besides the command: the tree, the tool
+// probes, the lockfile hashes, the environment pairs without the per-attempt variables and the
+// host. Make it once per tree with NewReuseSnapshot; Key then only hashes.
+type ReuseSnapshot struct {
+	tree        string
+	tools       []identityTool
+	lockfiles   []identityLock
+	environment [][2]string
+	host        identityHost
+}
+
+// NewReuseSnapshot probes the tools and lockfiles once, exactly as the verification identity does.
+func NewReuseSnapshot(s *sys.Session, tools Tools, tree, dir string) ReuseSnapshot {
+	return snapshotIdentity(s, tools, tree, dir).reuseSnapshot()
+}
+
+// Key is the reuse_sha256 a command event carries for command. It runs no probe and reads no file.
+func (r ReuseSnapshot) Key(command string) string {
+	return identityHash([]any{command, r.tree, r.tools, r.lockfiles, r.environment, r.host})
+}
+
+func (id checkIdentity) reuseSnapshot() ReuseSnapshot {
+	return ReuseSnapshot{tree: id.Tree, tools: id.Tools, lockfiles: id.Lockfiles, environment: id.reuseEnvironment, host: id.Host}
+}
+
 type identityLogger struct {
 	inner    Logger
 	identity checkIdentity
@@ -249,8 +274,9 @@ type identityLogger struct {
 
 func (l *identityLogger) Log(e map[string]any) {
 	if e["event"] == "command" {
+		command, _ := e["command"].(string)
 		e["identity_sha256"] = identityHash([]any{e["command"], l.identity.Tree, l.identity.Tools, l.identity.Lockfiles, l.identity.Environment, l.identity.Host})
-		e["reuse_sha256"] = identityHash([]any{e["command"], l.identity.Tree, l.identity.Tools, l.identity.Lockfiles, l.identity.reuseEnvironment, l.identity.Host})
+		e["reuse_sha256"] = l.identity.reuseSnapshot().Key(command)
 	}
 	l.inner.Log(e)
 }

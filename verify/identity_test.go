@@ -381,3 +381,60 @@ func TestIdentityEventKeepsSixFieldsAndOldHash(t *testing.T) {
 		t.Fatalf("identity_sha256 = %v, want %s", got, want)
 	}
 }
+
+func TestReuseSnapshotKeyEqualsLoggedReuseHash(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), []byte("example.com/m v1.0.0 h1:abc=\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"PATH=/nonexistent-reuse-bin", "KEEP=same", "KL_LOOP=one"}
+	snap := NewReuseSnapshot(sys.NewWith(env, dir), Tools{}, "tree", dir)
+	id := snapshotIdentity(sys.NewWith(env, dir), Tools{}, "tree", dir)
+	if len(id.Lockfiles) != 1 {
+		t.Fatalf("lockfiles = %v", id.Lockfiles)
+	}
+	if got, want := snap.Key("go build ./..."), reuseTestKey(t, id); got != want {
+		t.Fatalf("Key = %s, logged reuse_sha256 = %s", got, want)
+	}
+	if snap.Key("go build ./...") == snap.Key("go vet ./...") {
+		t.Fatal("Key ignores the command")
+	}
+}
+
+func TestReuseSnapshotKeyIgnoresAttemptVariablesAndSeesCommandTreePath(t *testing.T) {
+	t.Parallel()
+	key := func(tree, command string, env ...string) string {
+		dir := t.TempDir()
+		return NewReuseSnapshot(sys.NewWith(env, dir), Tools{}, tree, dir).Key(command)
+	}
+	const bin = "PATH=/nonexistent-reuse-bin"
+	base := key("tree", "go build ./...", bin, "KEEP=same")
+	if got := key("tree", "go build ./...", bin, "KEEP=same", "KOGEN_ATTEMPT_ID=9", "KOGEN_GENERATION=4", "KL_LOOP=z"); got != base {
+		t.Fatal("per-attempt variables changed the key")
+	}
+	for name, other := range map[string]string{
+		"command": key("tree", "go vet ./...", bin, "KEEP=same"),
+		"tree":    key("other", "go build ./...", bin, "KEEP=same"),
+		"PATH":    key("tree", "go build ./...", "PATH=/nonexistent-other", "KEEP=same"),
+	} {
+		if other == base {
+			t.Errorf("key unchanged when only the %s differs", name)
+		}
+	}
+}
+
+func TestReuseAndIdentityHashesEqualRecordedLiterals(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	env := []string{"PATH=/nonexistent-reuse-key-bin", "KOGEN_ATTEMPT_ID=attempt-7", "KOGEN_GENERATION=3", "KL_LOOP=x", "KEEP=same"}
+	id := snapshotIdentity(sys.NewWith(env, dir), Tools{}, "tree-1", dir)
+	id.Host = identityHost{Arch: "amd64", OS: "linux"}
+	event := reuseTestEvent(id)
+	if got, want := event["identity_sha256"], "8137b72363f3231a101ef79eeb7c3fb2cc8eda5ac992c394fe0b0659c419c30e"; got != want {
+		t.Errorf("identity_sha256 = %v, want %s", got, want)
+	}
+	if got, want := event["reuse_sha256"], "8a176cc44f9d2de5655b24a04057290ae0133603c84475b715917c73cbd66914"; got != want {
+		t.Errorf("reuse_sha256 = %v, want %s", got, want)
+	}
+}

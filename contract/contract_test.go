@@ -187,6 +187,8 @@ func TestConsumerSurface(t *testing.T) {
 	var _ func(*sys.Session, string, string, verify.Logger, func() (sys.Result, error)) (sys.Result, error) = verify.RunWatched
 	var _ func(string, *project.Intent, []project.Scenario) ([]string, []string, []string) = verify.StepAnalysis
 	var _ func(context.Context, string, string, string, []string, []string, []string) (verify.StepRaw, bool, error) = verify.RunStepScript
+	var _ func(*sys.Session, verify.Tools, string, string) verify.ReuseSnapshot = verify.NewReuseSnapshot
+	var _ func(verify.ReuseSnapshot, string) string = verify.ReuseSnapshot.Key
 	_ = verify.Execute
 	_ = verify.ContractProbeRun
 	_ = verify.ContractShapeAcceptanceDeadline
