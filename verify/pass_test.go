@@ -197,6 +197,25 @@ func TestPassSummaryProgressLine(t *testing.T) {
 	eq(t, "empty notice", NotRunNotice(nil), "")
 }
 
+func TestEndLine(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		status int
+		ms     int64
+		want   string
+	}{
+		{0, 384952, "kogen: go-test passed (385 s)"},
+		{0, 499, "kogen: go-test passed (0 s)"},
+		{0, 500, "kogen: go-test passed (1 s)"},
+		{0, 1499, "kogen: go-test passed (1 s)"},
+		{0, 1500, "kogen: go-test passed (2 s)"},
+		{1, 384952, "kogen: go-test failed, exit 1 (385 s)"},
+		{127, 384952, "kogen: go-test failed, exit 127 (385 s)"},
+	} {
+		eq(t, "line", endLine("go-test", c.status, c.ms), c.want)
+	}
+}
+
 func TestPassChecksLineAndResults(t *testing.T) {
 	t.Parallel()
 	acc := &Acceptance{Passed: 2, Scenarios: []ScenarioResult{{}, {}}}

@@ -519,7 +519,20 @@ func runLogged(ctx context.Context, s *sys.Session, in Input, dir, name, command
 	if err != nil {
 		return CommandResult{}, err
 	}
+	if timing.started {
+		s.Progress(endLine(name, r.Status, timing.wallMS))
+	}
 	return CommandResult{Name: name, Command: command, Status: r.Status, Output: r.Output}, nil
+}
+
+// endLine is the progress line for a setup command or check that has ended: its outcome and
+// its wall time in whole seconds, rounded half up. It holds no command text.
+func endLine(name string, status int, wallMS int64) string {
+	seconds := (wallMS + 500) / 1000
+	if status == 0 {
+		return fmt.Sprintf("kogen: %s passed (%d s)", name, seconds)
+	}
+	return fmt.Sprintf("kogen: %s failed, exit %d (%d s)", name, status, seconds)
 }
 
 // RunAcceptance runs the acceptance command in root on the Intent's feature with

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -128,8 +129,13 @@ func TestGreenPassRunsEveryItemInOrderOnTheCleanCandidate(t *testing.T) {
 	if !pass.Complete(p.Config, mustScenarios(t), nil) || !pass.Valid() {
 		t.Fatal("a green pass is complete evidence")
 	}
-	eq(t, "progress", stderr.String(),
-		"kogen: verifying (pass 1)\nkogen: running setup-1: "+p.Config.Setup[0]+"\nkogen: running setup-2: "+p.Config.Setup[1]+"\nkogen: pass 1: all checks passed\n")
+	wantProgress := regexp.MustCompile("^" + regexp.QuoteMeta("kogen: verifying (pass 1)\nkogen: running setup-1: "+p.Config.Setup[0]+"\n") +
+		`kogen: setup-1 passed \(\d+ s\)\n` + regexp.QuoteMeta("kogen: running setup-2: "+p.Config.Setup[1]+"\n") +
+		`kogen: setup-2 passed \(\d+ s\)\nkogen: z-first passed \(\d+ s\)\nkogen: a-later passed \(\d+ s\)\n` +
+		regexp.QuoteMeta("kogen: pass 1: all checks passed\n") + "$")
+	if !wantProgress.MatchString(stderr.String()) {
+		t.Fatalf("progress = %q", stderr.String())
+	}
 	eq(t, "setup evidence", ev.counts["setup"], 2)
 	eq(t, "acceptance evidence", ev.counts["acceptance"], 1)
 	if _, err := os.Stat(filepath.Join(in.RunDir, "acceptance-1.ndjson")); err != nil {
@@ -671,5 +677,28 @@ func TestMaintainedModelsFirstRedAndStage(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSerialPassPrintsALineWhenEachCommandEnds(t *testing.T) {
+	isolateTmp(t)
+	p := newProj(t)
+	p.Config.Setup = []string{"true"}
+	p.Config.Checks = []project.Check{{Name: "ca", Run: "true"}, {Name: "cb", Run: "exit 3"}, {Name: "cc", Run: "true"}}
+	s, stderr := p.session()
+	in := p.input(1)
+	in.RunDir, in.Log, in.Evidence = filepath.Join(p.Aux, "run"), &memLog{}, newEvidence()
+	if _, err := Run(context.Background(), s, in); err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, l := range strings.Split(stderr.String(), "\n") {
+		if strings.HasPrefix(l, "kogen: running ") || regexp.MustCompile(`^kogen: \S+ (passed|failed, exit \d+) \(\d+ s\)$`).MatchString(l) {
+			lines = append(lines, regexp.MustCompile(` \(\d+ s\)$`).ReplaceAllString(l, ""))
+		}
+	}
+	eqSlice(t, "end lines", lines, []string{"kogen: running setup-1: true", "kogen: setup-1 passed", "kogen: ca passed", "kogen: cb failed, exit 3"})
+	if strings.Contains(stderr.String(), "kogen: cc ") {
+		t.Fatalf("cc never ran: %q", stderr.String())
 	}
 }
