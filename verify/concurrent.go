@@ -30,6 +30,9 @@ type lockedLogger struct {
 
 func (l *lockedLogger) Log(e map[string]any) { l.mu.Lock(); defer l.mu.Unlock(); logEvent(l.inner, e) }
 
+// progressMu keeps each progress line whole when cohort members end at the same time.
+var progressMu sync.Mutex
+
 type cohortResult struct {
 	result       CommandResult
 	err          error
@@ -135,6 +138,11 @@ func runCohortCheck(ctx context.Context, cancelWork <-chan struct{}, parent *sys
 	}
 	if o.err != nil {
 		return cohortResult{err: o.err}
+	}
+	if !cancelled && !captured.Started().IsZero() {
+		progressMu.Lock()
+		parent.Progress(endLine(it.name, o.res.Status, wallMS))
+		progressMu.Unlock()
 	}
 	r := CommandResult{Name: it.name, Command: it.command, Status: o.res.Status, Output: o.res.Output}
 	return cohortResult{result: r, cancelled: cancelled}

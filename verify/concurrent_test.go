@@ -276,3 +276,78 @@ func TestDependencyBetweenChecksKeepsThemSequential(t *testing.T) {
 		t.Fatalf("pass: %+v", pass)
 	}
 }
+
+func cohortProgress(t *testing.T, items []item) (string, []map[string]any) {
+	t.Helper()
+	dir := t.TempDir()
+	parent := sys.NewWith(testEnv(), dir)
+	var buf strings.Builder
+	parent.Stderr = &buf
+	log := &memLog{}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if _, err := runCohort(ctx, parent, Input{Log: log}, dir, items); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String(), log.named("command_result")
+}
+
+func TestCohortMembersWriteEndedLines(t *testing.T) {
+	t.Parallel()
+	out, events := cohortProgress(t, []item{{name: "ca", command: "true"}, {name: "cb", command: "exit 3"}})
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	eq(t, "line count", len(lines), 2)
+	want := map[string]string{}
+	for _, e := range events {
+		name, status, ms := e["name"].(string), e["status"].(int), int64(e["wall_ms"].(int64))
+		want[name] = endLine(name, status, ms)
+	}
+	eq(t, "events", len(want), 2)
+	for _, l := range lines {
+		found := false
+		for _, w := range want {
+			found = found || l == w
+		}
+		if !found {
+			t.Errorf("line %q not from an event; want one of %v", l, want)
+		}
+	}
+	if !strings.Contains(out, "kogen: ca passed (") || !strings.Contains(out, "kogen: cb failed, exit 3 (") {
+		t.Fatalf("lines: %q", out)
+	}
+}
+
+func TestCohortLinesFollowFinishOrder(t *testing.T) {
+	t.Parallel()
+	out, _ := cohortProgress(t, []item{{name: "slow", command: "sleep 1.6"}, {name: "quick", command: "true"}})
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	eq(t, "line count", len(lines), 2)
+	var secs int
+	if !strings.HasPrefix(lines[0], "kogen: quick passed (") {
+		t.Fatalf("lines: %q", out)
+	}
+	if _, err := fmt.Sscanf(lines[1], "kogen: slow passed (%d s)", &secs); err != nil || secs < 2 {
+		t.Fatalf("lines: %q", out)
+	}
+}
+
+func TestCohortCancelledMemberWritesNoLine(t *testing.T) {
+	t.Parallel()
+	out, _ := cohortProgress(t, []item{{name: "first", command: "exit 3"}, {name: "second", command: "exec sleep 30"}})
+	if !strings.HasPrefix(out, "kogen: first failed, exit 3 (") || strings.Contains(out, "second") || strings.Count(out, "\n") != 1 {
+		t.Fatalf("lines: %q", out)
+	}
+}
+
+func TestCohortRefusedMemberWritesNoLine(t *testing.T) {
+	t.Parallel()
+	out, events := cohortProgress(t, []item{{name: "ok", command: "true"}, {name: "refused", command: "pkill nothing-here"}})
+	if strings.Contains(out, "refused") || !strings.HasPrefix(out, "kogen: ok passed (") || strings.Count(out, "\n") != 1 {
+		t.Fatalf("lines: %q", out)
+	}
+	for _, e := range events {
+		if e["name"] == "refused" {
+			t.Fatalf("a member that never started logged a result: %v", e)
+		}
+	}
+}
