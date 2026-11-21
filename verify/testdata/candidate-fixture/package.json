@@ -1,0 +1,8 @@
+{
+  "name": "candidate-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "mirrordep": "file:mirror/mirrordep-1.0.0.tgz"
+  }
+}

@@ -1,0 +1,7 @@
+# Script of the scripted provider (KOGEN_PROVIDER=scripted), one step per line:
+# <phase> <outcome>. The stand-in candidate in the verify tests follows it.
+shape ok
+build interrupt
+build --resume ok
+restore ok
+land ok
