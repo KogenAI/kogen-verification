@@ -1,0 +1,1 @@
+{"deferred":"The requested behavior is already implemented at HEAD (endLine in verify/run.go, written by runLogged) and covered by the existing tests TestEndLine and TestSerialPassPrintsALineWhenEachCommandEnds, so there is no production change for a correct overlay to carry and acceptance only observes those existing tests."}
