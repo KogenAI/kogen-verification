@@ -5,8 +5,13 @@ import "strings"
 // goTestTimeoutPanic begins the line the Go test binary prints when its own timeout fires.
 const goTestTimeoutPanic = "panic: test timed out after "
 
-// EnvFailure reports the first timeout or host resource failure line from a nonzero
-// check result, trimmed of surrounding whitespace. Zero status or no match is none.
+// modelAuthPhrase is the text printed when the model command-line tool a check calls is
+// not authenticated in the verification environment.
+const modelAuthPhrase = "Check authentication and model access"
+
+// EnvFailure reports the first timeout, host resource or unauthenticated model tool
+// failure line from a nonzero check result, trimmed of surrounding whitespace. Zero
+// status or no match is none.
 func EnvFailure(r CommandResult) (string, bool) {
 	if r.Status == 0 {
 		return "", false
@@ -30,7 +35,8 @@ func EnvFailure(r CommandResult) (string, bool) {
 			strings.Contains(line, "cannot allocate memory") ||
 			strings.Contains(line, "out of memory") ||
 			strings.Contains(line, "Out of memory: Killed process") ||
-			strings.Contains(line, "too many open files") {
+			strings.Contains(line, "too many open files") ||
+			strings.Contains(line, modelAuthPhrase) {
 			return line, true
 		}
 	}
