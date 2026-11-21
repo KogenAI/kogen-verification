@@ -102,21 +102,32 @@ process.stdout.write('\nKOGEN_SELFCHECK_RESULT:' + JSON.stringify({ loads, defs,
 `
 
 // ExitWrapper names the wrapper that changes exit codes (go run, npm run, npx without ` -- `
-// passthrough) in a step definition body that also deals with an exit code; empty if none.
+// passthrough) in a step definition body that also deals with an exit code; empty if none. With
+// several wrappers it names the one that comes first in the body.
 func ExitWrapper(body string) string {
 	if !strings.Contains(body, "status") && !strings.Contains(body, "exit") {
 		return ""
 	}
 	passthrough := strings.Contains(body, " -- ")
-	switch {
-	case strings.Contains(body, "go run"):
-		return "go run"
-	case strings.Contains(body, "npm run") && !passthrough:
-		return "npm run"
-	case strings.Contains(body, "npx") && !passthrough:
-		return "npx"
+	first, at := "", -1
+	for _, w := range []string{"go run", "npm run", "npx"} {
+		if w != "go run" && passthrough {
+			continue
+		}
+		if i := strings.Index(body, w); i >= 0 && (at < 0 || i < at) {
+			first, at = w, i
+		}
 	}
-	return ""
+	return first
+}
+
+// ExitWrapperRemedy is the advice that fits a wrapper from ExitWrapper: go run is replaced by a
+// built binary, any other wrapper by the program that its script starts.
+func ExitWrapperRemedy(wrapper string) string {
+	if wrapper == "go run" {
+		return "build the binary (go build) and run it instead"
+	}
+	return "run the program that the script starts directly (for example node followed by its file) and read its exit code"
 }
 
 // StepItems is the load, steps, definitions and exit_code items for the Intent's own step
@@ -162,7 +173,7 @@ func StepItems(own []string, raw StepRaw) []StepItem {
 		for _, d := range raw.Defs {
 			if w := ExitWrapper(d.Body); d.File == f && w != "" {
 				it.OK = false
-				it.Detail = "step definition " + d.Pattern + " asserts an exit code but obtains it through " + w + ", which changes exit codes; build the binary (go build) and run it instead"
+				it.Detail = "step definition " + d.Pattern + " asserts an exit code but obtains it through " + w + ", which changes exit codes; " + ExitWrapperRemedy(w)
 				break
 			}
 		}

@@ -17,6 +17,9 @@ func TestExitWrapper(t *testing.T) {
 		{"run('npx foo -- 4'); assert.equal(r.status, 2)", ""},
 		{"spawnSync('go',['build']); spawnSync('./bin'); assert.equal(r.status, 2)", ""},
 		{"spawnSync('sh',['-c','go run ./x']); assert.ok(r.stdout)", ""},
+		{"run('npm run build'); run('go run ./x'); assert.equal(r.status, 0)", "npm run"},
+		{"run('go run ./x'); run('npm run build'); assert.equal(r.status, 0)", "go run"},
+		{"run('npx a'); run('npm run build'); assert.equal(r.status, 0)", "npx"},
 	}
 	for _, c := range cases {
 		if got := ExitWrapper(c.body); got != c.want {
@@ -54,5 +57,35 @@ func TestStepItems(t *testing.T) {
 	items = StepItems([]string{own}, raw)
 	if len(items) != 1 || items[0].OK || items[0].Detail != "SyntaxError: boom" || len(StepWarnings(items)) != 0 {
 		t.Errorf("load failure: %+v", items)
+	}
+}
+
+func TestStepItemsExitCodeRemedy(t *testing.T) {
+	t.Parallel()
+	const own = "features/steps/a_steps.js"
+	const goRun = "step definition p asserts an exit code but obtains it through go run, which changes exit codes; build the binary (go build) and run it instead"
+	cases := []struct{ body, want string }{
+		{"run('go run ./x'); assert.equal(r.status, 0)", goRun},
+		{"run('npm run build'); assert.equal(r.status, 0)", "step definition p asserts an exit code but obtains it through npm run, which changes exit codes; run the program that the script starts directly (for example node followed by its file) and read its exit code"},
+		{"run('npx astro build'); assert.equal(r.status, 0)", "step definition p asserts an exit code but obtains it through npx, which changes exit codes; run the program that the script starts directly (for example node followed by its file) and read its exit code"},
+		{"run('npm run build'); run('go run ./x'); assert.equal(r.status, 0)", "step definition p asserts an exit code but obtains it through npm run, which changes exit codes; run the program that the script starts directly (for example node followed by its file) and read its exit code"},
+		{"run('npm run build'); assert.ok(r.stdout)", ""},
+	}
+	for _, c := range cases {
+		raw := StepRaw{Loads: []StepLoad{{File: own}}, Defs: []StepDef{{File: own, Pattern: "p", Body: c.body, Used: true}}}
+		var detail string
+		refused := 0
+		for _, it := range StepItems([]string{own}, raw) {
+			if it.Check == "exit_code" && !it.OK {
+				refused++
+				detail = it.Detail
+			}
+		}
+		if c.want == "" && refused != 0 || c.want != "" && (refused != 1 || detail != c.want) {
+			t.Errorf("%q: refused %d detail %q, want %q", c.body, refused, detail, c.want)
+		}
+		if strings.Contains(detail, "go build") != (c.want == goRun) {
+			t.Errorf("%q: go build in %q", c.body, detail)
+		}
 	}
 }
