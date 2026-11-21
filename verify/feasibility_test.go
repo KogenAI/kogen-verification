@@ -1,6 +1,7 @@
 package verify
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -315,5 +316,59 @@ func TestObserverPolarityCannotBeWaivedByMatchingSuccessfulOrRejectedControls(t 
 	})
 	if got, err := Declarations(intent("- evidence: " + string(capability))); err != nil || len(got) != 1 || got[0].Checks[0].Exit != 23 {
 		t.Fatalf("capability %v, %v", got, err)
+	}
+}
+
+func TestActualSummaryLeadsWithTheActualOutcome(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("abcdé\n", 40)
+	flat := strings.Repeat("abcdé ", 40)
+	cases := []struct {
+		name   string
+		exit   int
+		output string
+		want   int
+		text   string
+	}{
+		{"short output", 2, "boom: cannot open file\n", 0, "actual exit 2: boom: cannot open file (expected exit 0)"},
+		{"no output", 3, "", 0, "actual exit 3: (no output) (expected exit 0)"},
+		{"only line breaks", 3, "\n\r\n", 1, "actual exit 3: (no output) (expected exit 1)"},
+		{"exit code only", 4, "ok\n", 0, "actual exit 4: ok (expected exit 0)"},
+		{"line breaks become spaces", 1, "a\r\nb\rc\nd\n", 0, "actual exit 1: a b c d (expected exit 0)"},
+		{"120 characters are not cut", 1, strings.Repeat("é", 120), 0, "actual exit 1: " + strings.Repeat("é", 120) + " (expected exit 0)"},
+		{"121 characters are cut at a character", 1, strings.Repeat("é", 121), 0, "actual exit 1: " + strings.Repeat("é", 120) + "[cut] (expected exit 0)"},
+		{"long multi-line output", 2, long, 0, "actual exit 2: " + string([]rune(flat)[:120]) + "[cut] (expected exit 0)"},
+	}
+	for _, c := range cases {
+		if got := actualSummary(c.exit, c.output, c.want); got != c.text {
+			t.Errorf("%s:\n got: %q\nwant: %q", c.name, got, c.text)
+		}
+	}
+}
+
+func TestExecuteMismatchLinesLeadWithTheSummaryOnceAndSkipMatchingChecks(t *testing.T) {
+	isolateTmp(t)
+	p := newProj(t)
+	p.write("in.txt", "input\n")
+	pad := " # " + strings.Repeat("padding ", 30)
+	p.setFeasibility(
+		capability("fine", "printf 'ok\\n'"+pad, 0, "ok\n", "in.txt"),
+		capability("broken", "printf 'bad\\n'; exit 5"+pad, 0, strings.Repeat("x", 300), "in.txt"),
+	)
+	s, _ := p.session()
+	_, err := Execute(context.Background(), s, Tools{}, p.Root, p.Intent, p.Root, nil)
+	e := failWith(t, err, "intent", "not_ready")
+	var lines []string
+	for _, l := range e.Lines {
+		if !strings.HasPrefix(l, "probes run under a restricted environment") {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) != 1 {
+		t.Fatalf("want one mismatch line, got %q", lines)
+	}
+	const summary = "actual exit 5: bad (expected exit 0) broken/support: expected "
+	if !strings.HasPrefix(lines[0], summary) || !strings.Contains(lines[0], "; actual ") || strings.Count(lines[0], "actual exit ") != 1 {
+		t.Fatalf("line = %q", lines[0])
 	}
 }

@@ -342,7 +342,7 @@ func execute(ctx context.Context, s *sys.Session, tools Tools, root string, inte
 						omitted[name] = true
 					}
 				}
-				detail := d.ID + "/" + expected.Name + ": expected " + encode(d.raw[j]) + "; actual " + encode(got)
+				detail := actualSummary(actual.Exit, actual.Output, expected.Exit) + " " + d.ID + "/" + expected.Name + ": expected " + encode(d.raw[j]) + "; actual " + encode(got)
 				if shape && actual.TimedOut {
 					detail = fmt.Sprintf("%s/%s: command exceeded the %d-second limit (observers: %v); ", d.ID, expected.Name, int(ProbeTimeout/time.Second), d.Observers) + detail
 				}
@@ -362,6 +362,19 @@ func execute(ctx context.Context, s *sys.Session, tools Tools, root string, inte
 		return nil, e
 	}
 	return results, nil
+}
+
+// actualSummary leads a mismatch line with the actual outcome, so a reader that
+// cuts the line short still sees the exit code and the start of the output.
+func actualSummary(exit int, output string, expectedExit int) string {
+	text := strings.TrimRight(output, "\r\n")
+	text = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(text)
+	if text == "" {
+		text = "(no output)"
+	} else if r := []rune(text); len(r) > 120 {
+		text = string(r[:120]) + "[cut]"
+	}
+	return fmt.Sprintf("actual exit %d: %s (expected exit %d)", exit, text, expectedExit)
 }
 
 func withTimedOut(m map[string]any) map[string]any {
