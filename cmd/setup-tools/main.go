@@ -44,12 +44,17 @@ func run() error {
 	return nil
 }
 
-// writeMissing writes the pinned files of one tool that the working directory does not have.
+// writeMissing writes the pinned files of one tool that the working directory does not have. An
+// existing regular file is kept; an existing target of any other kind (a directory, a named
+// pipe, ...) is an error naming the target.
 func writeMissing(tool string) error {
 	dir := filepath.Join("testdata", "tools", tool)
 	for _, name := range pinnedFiles {
 		target := filepath.Join(dir, name)
-		if _, err := os.Stat(target); err == nil {
+		if info, err := os.Stat(target); err == nil {
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("%s exists but is not a regular file (%s)", target, info.Mode().Type())
+			}
 			continue
 		} else if !os.IsNotExist(err) {
 			return err

@@ -1,0 +1,1 @@
+{"deferred":"The correct change is a three-line edit of writeMissing plus a new test file; the driver in the step file exercises the real main.go directly, and the Build writes both the implementation and its tests."}
