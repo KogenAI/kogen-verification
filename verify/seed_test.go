@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -245,4 +246,44 @@ func TestSeedIgnoredLetsMakeReuseAndRebuildOutputs(t *testing.T) {
 	eq(t, "output reflects change", seedRead(t, dst, "bin/a"), "a2\n")
 	eq(t, "unchanged output", seedRead(t, dst, "bin/b"), "b1\n")
 	eq(t, "source output untouched", seedRead(t, src, "bin/a"), "a1\n")
+}
+
+// A source that is not a Git repository cannot list its ignored paths: SeedIgnored reports the
+// failed listing with the source named, and seeds nothing into dst.
+func TestSeedIgnoredReportsFailedListingOfNonGitSource(t *testing.T) {
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Keep Git from finding a repository above the temporary source.
+	t.Setenv("GIT_CEILING_DIRECTORIES", parent)
+	src := filepath.Join(parent, "src")
+	seedWrite(t, src, "a.txt", "a\n")
+	seedWrite(t, src, "build/cache", "cache\n")
+	dst := filepath.Join(parent, "dst")
+	if err := os.Mkdir(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err = SeedIgnored(src, dst)
+	if err == nil {
+		t.Fatal("SeedIgnored of a non-Git source returned no error")
+	}
+	if !strings.Contains(err.Error(), src) {
+		t.Errorf("error %q does not name the source %s", err, src)
+	}
+	if !strings.Contains(err.Error(), "listing ignored paths") {
+		t.Errorf("error %q does not name the failed listing", err)
+	}
+	entries, rerr := os.ReadDir(dst)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if len(entries) != 0 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("destination holds %v after the failed call, want no entries", names)
+	}
 }
