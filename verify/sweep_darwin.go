@@ -72,7 +72,17 @@ func procargs2(pid int) ([]byte, error) {
 // environment that cannot be read does not match.
 func procMarked(pid int, entry string) bool {
 	data, err := procargs2(pid)
-	if err != nil || len(data) < 4 {
+	if err != nil {
+		return false
+	}
+	return procargs2Marked(data, entry)
+}
+
+// procargs2Marked reports whether the kern.procargs2 data holds entry, byte for byte, as one
+// whole NUL-separated entry of the environment block. A marker in an argument, or only as part
+// of a longer environment entry, does not match. Truncated or malformed data does not match.
+func procargs2Marked(data []byte, entry string) bool {
+	if len(data) < 4 {
 		return false
 	}
 	argc := int(int32(binary.LittleEndian.Uint32(data)))
