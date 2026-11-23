@@ -25,7 +25,9 @@ func EnvFailure(r CommandResult) (string, bool) {
 			inTest = false
 		}
 		line := strings.TrimSpace(raw)
-		if strings.HasPrefix(line, goTestTimeoutPanic) {
+		// The Go test binary prints its own timeout panic unindented; an indented
+		// timeout-looking line inside a failing test is text the test logged.
+		if strings.HasPrefix(raw, goTestTimeoutPanic) || (!inTest && strings.HasPrefix(line, goTestTimeoutPanic)) {
 			return line, true
 		}
 		if inTest {

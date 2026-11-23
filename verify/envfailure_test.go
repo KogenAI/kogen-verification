@@ -52,6 +52,10 @@ func TestEnvFailure(t *testing.T) {
 		{"phrase is case sensitive", CommandResult{Status: 1, Output: "check authentication and model access"}, ""},
 		{"ordinary failure", CommandResult{Status: 1, Output: "--- FAIL: TestAppIsReady (0.00s)\nFAIL\n"}, ""},
 		{"zero status", CommandResult{Status: 0, Output: timedOut}, ""},
+		{"timeout text logged inside a failing test", CommandResult{Status: 1, Output: "--- FAIL: TestLog (0.00s)\n    log_test.go:9: captured output:\n    panic: test timed out after 1s\nFAIL\nexit status 1\nFAIL\texample.com/m\t0.002s\n"}, ""},
+		{"timeout directly after a failing test's lines", CommandResult{Status: 1, Output: "--- FAIL: TestOne (0.00s)\n    one_test.go:5: boom\npanic: test timed out after 2s\n\trunning tests:\n\t\tTestSlow (2s)\n"}, "panic: test timed out after 2s"},
+		{"timeout after a finished failing test", CommandResult{Status: 1, Output: "--- FAIL: TestOne (0.00s)\n    one_test.go:5: boom\nFAIL\nFAIL\texample.com/m\t0.100s\npanic: test timed out after 1s\n"}, "panic: test timed out after 1s"},
+		{"indented timeout after a finished failing test", CommandResult{Status: 1, Output: "--- FAIL: TestOne (0.00s)\n    one_test.go:5: boom\nFAIL\n  panic: test timed out after 1s\n"}, "panic: test timed out after 1s"},
 		{"not at the line start", CommandResult{Status: 1, Output: "log: panic: test timed out after 10m0s\n"}, ""},
 	} {
 		got, ok := EnvFailure(c.result)
