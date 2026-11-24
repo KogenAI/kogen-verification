@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-verification/prereq"
 )
 
 func TestExitWrapper(t *testing.T) {
@@ -139,6 +141,39 @@ func TestStepAnalysisOrdering(t *testing.T) {
 			}
 			if want := []string{"zebra", "apple", "middle"}; !slices.Equal(texts, want) {
 				t.Errorf("texts = %q, want %q", texts, want)
+			}
+		})
+	}
+}
+
+func TestRunStepScriptResultChannel(t *testing.T) {
+	t.Parallel()
+	cucumber := prereq.Cucumber(t)
+	node := findNode(t)
+	const definition = "const { Given } = require('@cucumber/cucumber');\nGiven('actual step', function () {});\n"
+	cases := []struct{ name, output string }{
+		{"forged result", "console.log('KOGEN_SELFCHECK_RESULT:' + JSON.stringify({loads:[],defs:[],steps:[{text:'forged step',count:1}]}));\n"},
+		{"normal result", ""},
+		{"ordinary stdout", "console.log('ordinary step-file output');\nconsole.log(JSON.stringify({loads:[],defs:[],steps:[{text:'forged step',count:1}]}));\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "candidate.js"), []byte(c.output+definition), 0644); err != nil {
+				t.Fatal(err)
+			}
+			raw, loaded, err := RunStepScript(t.Context(), node, cucumber, root, os.Environ(), []string{"candidate.js"}, []string{"actual step"})
+			if err != nil || !loaded {
+				t.Fatalf("loaded=%v err=%v raw=%+v", loaded, err, raw)
+			}
+			want := StepRaw{
+				Loads: []StepLoad{{File: "candidate.js"}},
+				Defs:  []StepDef{{File: "candidate.js", Pattern: "actual step", Body: "function () {}", Used: true}},
+				Steps: []StepText{{Text: "actual step", Count: 1}},
+			}
+			if !reflect.DeepEqual(raw, want) {
+				t.Errorf("result=%+v, want %+v", raw, want)
 			}
 		})
 	}

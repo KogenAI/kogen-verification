@@ -3,6 +3,7 @@ package verify
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -76,7 +77,8 @@ type StepText struct {
 }
 
 // stepScript loads the step files the way the acceptance command does and reports StepRaw as
-// the last stdout line. The input is {"files":[...],"texts":[...]} on stdin.
+// the last stdout line, identified by an unpredictable invocation-specific prefix.
+// The input is {"files":[...],"texts":[...],"resultPrefix":"..."} on stdin.
 const stepScript = `
 const fs = require('fs'), path = require('path');
 const cc = require('@cucumber/cucumber');
@@ -98,7 +100,7 @@ const defs = lib.stepDefinitions.map(d => ({
   body: String(d.unwrappedCode), used: inp.texts.some(t => d.matchesStepName(t)),
 }));
 const steps = inp.texts.map(t => ({ text: t, count: lib.stepDefinitions.filter(d => d.matchesStepName(t)).length }));
-process.stdout.write('\nKOGEN_SELFCHECK_RESULT:' + JSON.stringify({ loads, defs, steps }) + '\n');
+process.stdout.write('\n' + inp.resultPrefix + JSON.stringify({ loads, defs, steps }) + '\n');
 `
 
 // ExitWrapper names the wrapper that changes exit codes (go run, npm run, npx without ` -- `
@@ -254,7 +256,9 @@ func StepAnalysisIn(root, stepsDir string, intent *project.Intent, scenarios []p
 // env being the process environment. loaded is false when Node could not run the script at
 // all; raw then carries that failure as the load error of every file.
 func RunStepScript(ctx context.Context, node, cucumber, root string, env, files, texts []string) (raw StepRaw, loaded bool, err error) {
-	in, _ := json.Marshal(map[string]any{"files": files, "texts": texts})
+	// Keep the result identifier off argv and the environment seen by loaded files.
+	resultPrefix := "KOGEN_SELFCHECK_RESULT:" + rand.Text() + ":"
+	in, _ := json.Marshal(map[string]any{"files": files, "texts": texts, "resultPrefix": resultPrefix})
 	cmd := exec.CommandContext(ctx, node, "-e", stepScript)
 	cmd.Dir = root
 	cmd.Env = append(slices.Clone(env), "NODE_PATH="+cucumber)
@@ -263,7 +267,7 @@ func RunStepScript(ctx context.Context, node, cucumber, root string, env, files,
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	runErr := cmd.Run()
 	for _, line := range strings.Split(out.String(), "\n") {
-		if rest, ok := strings.CutPrefix(line, "KOGEN_SELFCHECK_RESULT:"); ok {
+		if rest, ok := strings.CutPrefix(line, resultPrefix); ok {
 			if json.Unmarshal([]byte(rest), &raw) == nil {
 				return raw, true, nil
 			}
