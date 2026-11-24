@@ -2,9 +2,13 @@ package verify
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
 )
 
 func TestExitWrapper(t *testing.T) {
@@ -87,5 +91,55 @@ func TestStepItemsExitCodeRemedy(t *testing.T) {
 		if strings.Contains(detail, "go build") != (c.want == goRun) {
 			t.Errorf("%q: go build in %q", c.body, detail)
 		}
+	}
+}
+
+func TestStepAnalysisOrdering(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, folder string
+		analyze      func(string, *project.Intent, []project.Scenario) ([]string, []string, []string)
+	}{
+		{"default wrapper", "features/steps/", StepAnalysis},
+		{"empty directory", "features/steps/", func(root string, intent *project.Intent, scenarios []project.Scenario) ([]string, []string, []string) {
+			return StepAnalysisIn(root, "", intent, scenarios)
+		}},
+		{"configured nested directory", "test/acceptance/steps/", func(root string, intent *project.Intent, scenarios []project.Scenario) ([]string, []string, []string) {
+			return StepAnalysisIn(root, "test/acceptance/steps", intent, scenarios)
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, c.folder), 0755); err != nil {
+				t.Fatal(err)
+			}
+			// Own files are deliberately nonalphabetical, and other files sort before them.
+			for _, name := range []string{"z_own.js", "m_own.js", "b_other.js", "a_other.js"} {
+				if err := os.WriteFile(filepath.Join(root, c.folder, name), nil, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			intent := &project.Intent{Acceptance: []string{
+				".kogen/intents/fixture/acceptance.feature",
+				c.folder + "z_own.js",
+				c.folder + "m_own.js",
+			}}
+			scenarios := []project.Scenario{
+				{Steps: []project.Step{{Text: "zebra"}, {Text: "apple"}, {Text: "zebra"}}},
+				{Steps: []project.Step{{Text: "apple"}, {Text: "middle"}, {Text: "zebra"}, {Text: "middle"}}},
+			}
+			own, files, texts := c.analyze(root, intent, scenarios)
+			if want := []string{c.folder + "z_own.js", c.folder + "m_own.js"}; !slices.Equal(own, want) {
+				t.Errorf("own = %q, want %q", own, want)
+			}
+			if want := []string{c.folder + "z_own.js", c.folder + "m_own.js", c.folder + "a_other.js", c.folder + "b_other.js"}; !slices.Equal(files, want) {
+				t.Errorf("files = %q, want %q", files, want)
+			}
+			if want := []string{"zebra", "apple", "middle"}; !slices.Equal(texts, want) {
+				t.Errorf("texts = %q, want %q", texts, want)
+			}
+		})
 	}
 }
