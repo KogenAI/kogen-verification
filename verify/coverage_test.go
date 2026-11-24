@@ -154,3 +154,28 @@ func TestVerifyAcceptanceAndMaintainedReports(t *testing.T) {
 		})
 	}
 }
+
+func TestSuiteFilesGlobErrorAndSortedMatches(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if _, err := suiteFiles(root, "["); err == nil {
+		t.Fatal("malformed glob returned no error")
+	}
+	for _, name := range []string{"suite/b.feature", "suite/a.feature", "suite/readme.txt"} {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := suiteFiles(root, "suite/*.feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"suite/a.feature", "suite/b.feature"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("suite files %#v want %#v", got, want)
+	}
+}
