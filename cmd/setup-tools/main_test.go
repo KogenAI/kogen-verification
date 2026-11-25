@@ -31,6 +31,13 @@ func inTempDir(t *testing.T) string {
 func TestRunRejectsNonRegularPinnedTarget(t *testing.T) {
 	makeDir := func(p string) error { return os.Mkdir(p, 0o755) }
 	makeFifo := func(p string) error { return syscall.Mkfifo(p, 0o644) }
+	makeSymlink := func(p string) error {
+		referent := filepath.Join(filepath.Dir(p), "referent")
+		if err := os.WriteFile(referent, []byte("regular file"), 0o644); err != nil {
+			return err
+		}
+		return os.Symlink("referent", p)
+	}
 	cases := []struct {
 		name   string
 		target string
@@ -40,6 +47,10 @@ func TestRunRejectsNonRegularPinnedTarget(t *testing.T) {
 		{"directory at cucumber package-lock.json", "testdata/tools/cucumber/package-lock.json", makeDir},
 		{"directory at quint package.json", "testdata/tools/quint/package.json", makeDir},
 		{"fifo at cucumber package-lock.json", "testdata/tools/cucumber/package-lock.json", makeFifo},
+		{"symlink at cucumber package.json", "testdata/tools/cucumber/package.json", makeSymlink},
+		{"symlink at cucumber package-lock.json", "testdata/tools/cucumber/package-lock.json", makeSymlink},
+		{"symlink at quint package.json", "testdata/tools/quint/package.json", makeSymlink},
+		{"symlink at quint package-lock.json", "testdata/tools/quint/package-lock.json", makeSymlink},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
